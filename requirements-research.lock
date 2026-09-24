@@ -1,4 +1,6 @@
 blinker==1.9.0
+baostock==0.9.3
+duckdb==1.5.5
 click==8.5.0
 cloudpickle==3.1.2
 contourpy==1.4.0

@@ -17,15 +17,19 @@ from quantlab.data.qualification import qualification
 
 
 class ForwardBook:
-    def __init__(self,path,model_version,cfg=None):
+    def __init__(self,path,model_version,cfg=None,*,strategy='opportunity',risk_policy='P0',candidate='baseline',data_mode='strict'):
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.mandate=Mandate.from_config(cfg or CONFIG);self.model_version=model_version
+        from quantlab.strategy.legacy import legacy_config
+        self.strategy,self.risk_policy,self.candidate,self.data_mode=strategy,risk_policy,candidate,data_mode
+        selected=legacy_config(cfg or CONFIG) if strategy=='legacy_repaired' else cfg or CONFIG
+        self.mandate=Mandate.from_config(selected,risk_policy=risk_policy);self.model_version=model_version
         if not model_version:raise ValueError('frozen_model_version_required')
         with self.connect() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS policy (key TEXT PRIMARY KEY,value TEXT);'
                 'CREATE TABLE IF NOT EXISTS sessions (date TEXT PRIMARY KEY, payload TEXT, state BLOB, hash TEXT, previous_hash TEXT);'
                 'CREATE TABLE IF NOT EXISTS actual_fills (fill_id TEXT PRIMARY KEY, payload TEXT);')
-            identity=json.dumps(dict(model_version=model_version,mandate_version=self.mandate.version,code_version=fingerprint(provenance()["code_sha256"])),sort_keys=True)
+            identity=json.dumps(dict(model_version=model_version,mandate_version=self.mandate.version,code_version=fingerprint(provenance()["code_sha256"]),
+                                     strategy=strategy,risk_policy=risk_policy,candidate=candidate,data_mode=data_mode),sort_keys=True)
             old=db.execute("SELECT value FROM policy WHERE key='identity'").fetchone()
             if old and old[0]!=identity:raise ValueError('forward_policy_changed_start_new_book')
             db.execute("INSERT OR IGNORE INTO policy VALUES ('identity',?)",(identity,))
@@ -51,6 +55,12 @@ class ForwardBook:
             frame=getattr(ds,name)
             if len(frame) and 'available_at' in frame:frame=frame[frame.available_at.map(timestamp)<=cutoff]
             result[name]=frame_hash(frame)
+        for name,date_column in (('industry_records','effective_at'),('financials','announced_on')):
+            frame=getattr(ds,name,pd.DataFrame())
+            if len(frame):
+                effective=pd.to_datetime(frame[date_column],utc=True,errors='coerce')
+                frame=frame.loc[effective.le(cutoff.tz_convert('UTC'))]
+            result[name]=frame_hash(frame)
         result['calendar']=fingerprint(list(ds.calendar[ds.calendar<=d]))
         return result
 
@@ -66,8 +76,13 @@ class ForwardBook:
         if now<decision_time(d):raise ValueError('forward_close_not_yet_available')
         if d not in ds.calendar:raise ValueError('not_exchange_session')
         if pd.Timestamp(ds.manifest['as_of']).normalize()!=d:raise ValueError('forward_data_not_current')
-        report=qualification(ds)
-        if report['status']!='qualified_for_daily_research' and not (allow_test_fixture and ds.manifest.get('source')=='TEST_FIXTURE'):
+        if self.data_mode=='free_research':
+            from quantlab.data.qualification import research_assessment
+            report=research_assessment(ds,require_industry=False)
+            acceptable=report['status']=='research_ready'
+        else:
+            report=qualification(ds);acceptable=report['status']=='qualified_for_daily_research'
+        if not acceptable and not (allow_test_fixture and ds.manifest.get('source')=='TEST_FIXTURE'):
             raise ValueError('forward_data_not_qualified:'+','.join(report['reasons']))
         if forecast is not None:
             forecast.validate(d)
@@ -91,12 +106,15 @@ class ForwardBook:
                 if hashes!=before['history_hashes']:raise ValueError('historical_data_revision_requires_review')
                 initial=pickle.loads(last[1]);previous=last[2]
             cfg=self.mandate.config()
-            run=Engine(cfg).run(ds,strategy='opportunity',forecasts={d:forecast} if forecast else {},start=d,end=d,initial_state=initial)
+            run=Engine(cfg).run(ds,strategy=self.strategy,forecasts=({d:forecast} if forecast else {}) if self.strategy=='opportunity' else None,
+                start=d,end=d,initial_state=initial,risk_policy=self.risk_policy,candidate=self.candidate,data_mode=self.data_mode)
             if run['status']=='blocked_data':raise ValueError('forward_run_blocked')
             state=pickle.dumps(run['_runtime']);orders=[o for o in run['orders'] if o['status'] in ('pending','partial')]
             payload=dict(as_of=str(d.date()),recorded_at=str(now),model_version=self.model_version,data_version=ds.version,
                 mandate_version=self.mandate.version,status='fixture_test_only' if allow_test_fixture else run['status'],
                 run_health=run['run_health'],
+                risk_policy=self.risk_policy,candidate=self.candidate,risk_budget=run['_runtime']['budget'].as_dict(),
+                rotation_advice=run['rotation_advice'],data_assessment=report,
                 account=run['account'][-1],pending_orders=orders,run_id=run['run_id'],fills=run['fills'],
                 request_hash=self._request_hash(ds,forecast),
                 history_hashes=self._history(ds,d),recovered_session=session is not None,

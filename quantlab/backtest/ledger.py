@@ -37,6 +37,14 @@ class Order:
     status: str = "pending"
     reject_reason: str = ""
     industry_policy: str = 'enforced'
+    risk_policy: str = 'P0'
+    risk_budget: dict = field(default_factory=dict)
+    candidate: str = 'baseline'
+    estimated_notional: float = 0.
+    estimated_fees: float = 0.
+    cash_at_submission: float = 0.
+    execute_not_before: str | None = None
+    execute_not_before_session: int | None = None
 
 
 def price_bounds(bar,rule):
@@ -268,6 +276,7 @@ class Ledger:
         self.mark(date, {c: b.get("open", np.nan) for c, b in bars.items()}, "open")
         for o in sorted(self.orders, key=lambda x: (x.side != "sell", x.order_id)):
             if o.status not in ("pending", "partial") or pd.Timestamp(o.signal_date) >= pd.Timestamp(date): continue
+            if o.execute_not_before_session is not None and session<o.execute_not_before_session: continue
             c, side = o.instrument_id, o.side
             rule = rules.get(c)
             if rule is None:
@@ -337,6 +346,7 @@ class Ledger:
                                "quantity": qty, "price": px, "notional": notional, "commission": commission,
                                "stamp_tax": stamp, "dividend_tax": dividend_tax, "fees": fees, "slippage_cost": money(abs(px-px0)*qty),
                                "signal_date": o.signal_date, "reason": o.reason, "cash_after": self.cash,
+                               "risk_policy":o.risk_policy,"risk_budget":o.risk_budget,"candidate":o.candidate,
                                "execution_basis": bars[c].get('open_status_basis','observed_status')})
             if side == "buy" and o.remaining: o.status, o.reject_reason = "expired", "partial_day_order"
         if self.cash < -0.005: raise AssertionError("negative cash")

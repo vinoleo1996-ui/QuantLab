@@ -14,7 +14,8 @@ def legacy_config(cfg):
 
 
 def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
-                    exposures=None, risk_snapshot=None, gross=1., vol_scale=1.):
+                    exposures=None, risk_snapshot=None, gross=1., vol_scale=1.,
+                    budget=None, equal_weight=False, allowed_increases=None):
     """Max feasible gross, then min variance at that gross. No alpha/penalty fallback.
 
     Relative position caps act on final gross, not on an impossible full-investment
@@ -22,7 +23,16 @@ def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
     """
     codes = list(returns.columns)
     empty = pd.Series(0., index=codes)
-    detail = {'policy': 'legacy_max_gross_min_variance_v1', 'feasible_gross': None}
+    detail = {'policy': 'legacy_max_gross_equal_weight_v1' if equal_weight else
+                       'legacy_max_gross_min_variance_v1', 'feasible_gross': None}
+    policy = budget.as_dict() if hasattr(budget, 'as_dict') else budget
+    relaxed = policy is not None and policy['policy_id'] != 'P0'
+    if policy is not None:
+        if policy['policy_id'] not in ('P0', 'P1', 'P2'):
+            raise ValueError('unknown_risk_policy')
+        gross, vol_scale = min(gross, policy['gross_scale']), min(vol_scale, policy['vol_scale'])
+        detail.update(risk_policy=policy['policy_id'], risk_policy_version=policy['version'],
+                      risk_state=policy['state'])
     if not codes: return empty, 'no_candidates', detail
     r = returns.dropna()
     if len(r) < 40: return empty, 'insufficient_covariance_history', detail
@@ -30,21 +40,47 @@ def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
     if not np.isfinite(cov).all(): return empty, 'invalid_covariance', detail
     n = len(codes); desired = set(selected)
     lower = pd.Series(locked or {}, dtype=float).reindex(codes, fill_value=0.).to_numpy()
-    caps = np.array([cfg.research.max_stock_weight if c in desired else 0. for c in codes])
-    ceiling = min(gross, 1-cfg.research.cash_buffer)
+    prior = pd.Series({} if previous is None else previous, dtype=float).reindex(codes, fill_value=0.).to_numpy()
+    if not np.isfinite(prior).all() or not np.isfinite(lower).all() or np.any(prior < 0) or np.any(lower < 0):
+        return empty, 'invalid_previous_or_locked_weights', detail
+    if previous is None:
+        prior = lower.copy()
+    stock_cap = cfg.research.max_stock_weight if policy is None else policy['max_stock_weight']
+    soft_stock = stock_cap if not relaxed else policy['soft_stock_weight']
+    # A soft entry target never forces a still-permitted existing holding down.
+    caps = np.array([min(stock_cap, max(prior[i], soft_stock)) if c in desired else 0.
+                     for i, c in enumerate(codes)])
+    if allowed_increases is not None:
+        allowed = set(allowed_increases)
+        caps = np.minimum(caps, [caps[i] if c in allowed else prior[i]
+                                 for i, c in enumerate(codes)])
+        detail['allowed_increases'] = sorted(allowed)
+    cash_buffer = cfg.research.cash_buffer if policy is None else policy['cash_buffer']
+    ceiling = min(gross, 1-cash_buffer)
     rows = [np.ones(n)]; limits = [ceiling]; names = ['cash_and_risk_gross']
+    def group_limit(name, row, kind):
+        legacy_limit = cfg.portfolio.max_sector_weight if kind == 'sector' else cfg.research.max_cluster_weight
+        if policy is None or not relaxed:
+            return legacy_limit
+        unknown = 'UNKNOWN' in str(name).upper()
+        hard = policy['unknown_'+kind+'_weight'] if unknown else policy['max_'+kind+'_weight']
+        soft = max(0., hard-.02) if unknown else policy['soft_'+kind+'_weight']
+        return min(hard, max(soft, float(row @ prior)))
     if exposures is not None:
         for name, row in exposures.reindex(columns=codes, fill_value=0.).iterrows():
-            rows.append(row.to_numpy()); limits.append(cfg.portfolio.max_sector_weight); names.append('industry:'+str(name))
+            values = row.to_numpy()
+            rows.append(values); limits.append(group_limit(name, values, 'sector')); names.append('industry:'+str(name))
     if risk_snapshot is not None:
         for name, row in risk_snapshot.matrix(codes).iterrows():
-            rows.append(row.to_numpy()); limits.append(cfg.research.max_cluster_weight); names.append('downside:'+str(name))
+            values = row.to_numpy()
+            rows.append(values); limits.append(group_limit(name, values, 'cluster')); names.append('downside:'+str(name))
     # Archived 1/N + deviation applies to the invested basket, not account NAV.
-    relative_cap = 1/max(len(desired), 1)+cfg.portfolio.weight_max_dev
-    for i,c in enumerate(codes):
-        if c in desired:
-            row = np.full(n, -relative_cap); row[i] += 1
-            rows.append(row); limits.append(0.); names.append('relative_weight:'+c)
+    relative_cap = None if relaxed else 1/max(len(desired), 1)+cfg.portfolio.weight_max_dev
+    if relative_cap is not None:
+        for i,c in enumerate(codes):
+            if c in desired:
+                row = np.full(n, -relative_cap); row[i] += 1
+                rows.append(row); limits.append(0.); names.append('relative_weight:'+c)
     a = np.array(rows); b = np.array(limits)
     bounds = list(zip(lower, caps))
     detail.update(candidate_count=len(desired), covariance_rows=len(r), cash_and_risk_ceiling=ceiling,
@@ -52,7 +88,8 @@ def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
     if np.any(lower>caps+1e-8): return empty, 'locked_holdings_violate_constraints', detail
     lp = linprog(-np.ones(n), A_ub=a, b_ub=b, bounds=bounds, method='highs')
     if not lp.success: return empty, 'linear_constraints_infeasible', detail
-    target_var = (cfg.portfolio.target_vol*vol_scale)**2
+    target_vol = cfg.portfolio.target_vol if policy is None else policy['target_vol']
+    target_var = (target_vol*vol_scale)**2
     scale = max(target_var, 1e-6)
     linear = {'type':'ineq','fun':lambda w:b-a@w,'jac':lambda w:-a}
     vol = {'type':'ineq','fun':lambda w:1-float(w@cov@w)/scale,
@@ -78,8 +115,15 @@ def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
     nonconstant = np.ptp(a,axis=1)>1e-12
     aa,bb=a[nonconstant],b[nonconstant]
     fixed_linear={'type':'ineq','fun':lambda w:bb-aa@w,'jac':lambda w:-aa}
-    second = minimize(lambda w:float(w@cov@w)/scale, max_weights, jac=lambda w:2*cov@w/scale,
-                      bounds=bounds, constraints=[fixed_linear,equality], method='SLSQP', options=options)
+    if equal_weight:
+        # An explicit comparator on the same feasible set, never a solver fallback.
+        equal = np.array([g/max(len(desired), 1) if c in desired else 0. for c in codes])
+        objective, jacobian = lambda w:float((w-equal)@(w-equal)), lambda w:2*(w-equal)
+    else:
+        objective, jacobian = lambda w:float(w@cov@w)/scale, lambda w:2*cov@w/scale
+    second_constraints = [fixed_linear, equality] + ([vol] if equal_weight else [])
+    second = minimize(objective, max_weights, jac=jacobian,
+                      bounds=bounds, constraints=second_constraints, method='SLSQP', options=options)
     if not second.success or not valid(second.x) or abs(second.x.sum()-g)>1e-7:
         detail['solver_message'] = second.message
         return empty, 'minimum_variance_solver_failed', detail

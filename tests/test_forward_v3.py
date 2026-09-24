@@ -10,6 +10,18 @@ from quantlab.config import CONFIG
 
 
 class ForwardJournal(unittest.TestCase):
+    def test_legacy_policy_book_runs_without_forecast_and_rejects_policy_change(self):
+        ds=dataset(days=80);cfg=deepcopy(CONFIG);cfg.research.universe_mode='pit_liquidity'
+        d=ds.calendar[64];ds.manifest['as_of']=str(d.date())
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'legacy.sqlite3'
+            book=ForwardBook(path,'legacy-frozen',cfg,strategy='legacy_repaired',risk_policy='P2')
+            result=book.step(ds,now=str(d.date())+' 18:01',allow_test_fixture=True)
+            self.assertEqual(result['risk_budget']['policy_id'],'P2')
+            self.assertFalse(result['executable'])
+            with self.assertRaisesRegex(ValueError,'forward_policy_changed'):
+                ForwardBook(path,'legacy-frozen',cfg,strategy='legacy_repaired',risk_policy='P1')
+
     def test_restart_idempotency_revision_and_tamper(self):
         ds=dataset(days=80);cfg=deepcopy(CONFIG);cfg.research.universe_mode='pit_liquidity'
         d=ds.calendar[64];ds.manifest['as_of']=str(d.date())

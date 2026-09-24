@@ -4,6 +4,7 @@ import json
 import hashlib
 import pandas as pd
 from quantlab.data.contracts import load_dataset, fingerprint, frame_hash, timestamp
+from quantlab.data.industry import resolve_industries
 
 REQUIRED=('security_history','raw_prices','corporate_actions','calendar','benchmark','opening_rules')
 
@@ -12,7 +13,8 @@ def coverage_input_fingerprint(ds):
     """Exclude the manifest to avoid circular hashes with its evidence references."""
     return fingerprint(dict(panels={c:frame_hash(p) for c,p in sorted(ds.panels.items())},
         instruments=frame_hash(ds.instruments),actions=frame_hash(ds.actions),calendar=list(ds.calendar),
-        benchmark=frame_hash(ds.benchmark),exposures=frame_hash(ds.exposures)))
+        benchmark=frame_hash(ds.benchmark),exposures=frame_hash(ds.exposures),
+        industry_records=frame_hash(ds.industry_records),financials=frame_hash(ds.financials)))
 
 
 def _verify_coverage(ds, field, ref):
@@ -75,19 +77,38 @@ def research_assessment(ds, *, require_industry=False):
         for field in ('amount','turnover'):
             if field not in p:reasons.append('price_volume_missing:'+code+':'+field)
         if 'amount' in p and (p.amount.dropna()<0).any():reasons.append('negative_amount:'+code)
-    sectors=ds.instruments.get('sector',pd.Series(dtype=str))
+    resolved=resolve_industries(ds,ds.manifest['as_of'])
+    sectors=resolved.sector.reindex(ds.panels) if not resolved.empty else pd.Series('UNKNOWN',index=list(ds.panels))
     industry=bool(len(sectors)) and not (sectors.isna()|sectors.isin(['UNKNOWN','NA',''])).any()
-    if require_industry and not industry:reasons.append('historical_industry_incomplete')
+    # A conditional feature experiment can use valid industries while unknown
+    # names remain ineligible for those features. Strict qualification above
+    # continues to require complete historical evidence.
+    industry_partial=bool((sectors.notna()&~sectors.isin(['UNKNOWN','NA',''])).any())
+    if require_industry and not industry_partial:reasons.append('historical_industry_incomplete')
     warnings=['public_data_revisions_not_independently_verified','opening_capacity_unverified']
     if not industry:warnings.append('industry_disabled_unknown_exposure_capped')
     if ds.manifest.get('actions_coverage')!='complete':warnings.append('accounting_coverage_unverified')
     if ds.manifest.get('execution_gaps'):warnings.append('opening_rule_conflicts:'+str(len(ds.manifest['execution_gaps'])))
     if any(p.get('open_status',pd.Series(dtype=str)).eq('derived').any() for p in ds.panels.values()):
         warnings.append('daily_open_execution_is_explicit_assumption')
+    industry_mode=ds.manifest.get('industry_mode','verified_pit')
+    if industry_mode=='effective_date_proxy':warnings.append('industry_effective_dates_are_not_publication_evidence')
+    if ds.manifest.get('feature_price_basis')=='historical_adjustment_snapshot':
+        warnings.append('feature_prices_use_current_historical_adjustment_snapshot')
+    coverage=dict(price_rows=sum(len(p) for p in ds.panels.values()),
+        turnover_rows=sum(int(p.get('turnover',pd.Series(dtype=float)).notna().sum()) for p in ds.panels.values()),
+        observed_state_rows=sum(int(p.get('is_st_at_open',pd.Series(dtype=float)).notna().sum()) for p in ds.panels.values()),
+        securities=len(ds.panels),industry_known=int((sectors.notna()&~sectors.isin(['UNKNOWN','NA',''])).sum()))
+    if coverage['turnover_rows']<coverage['price_rows']:warnings.append('legacy_turnover_factor_coverage_incomplete')
+    if coverage['observed_state_rows']<coverage['price_rows'] and ds.manifest.get('source')=='local_market_snapshot':
+        warnings.append('missing_security_states_do_not_allow_new_positions')
     return dict(status='blocked_data' if reasons else 'research_ready',reasons=sorted(set(reasons)),
         warnings=warnings,data_version=ds.version,promotion_approved=False,
         execution_gaps=ds.manifest.get('execution_gaps',[]),
-        modules=dict(price_volume=not reasons,industry=industry,announcements=False,execution_capacity=False),
+        modules=dict(price_volume=not reasons,industry=industry,industry_partial=coverage['industry_known']>0,
+                     industry_verified=industry and industry_mode=='verified_pit',
+                     legacy_turnover_complete=coverage['turnover_rows']==coverage['price_rows'],
+                     announcements=False,execution_capacity=False),coverage=coverage,
         accounting_verified=ds.manifest.get('actions_coverage')=='complete' and not ds.manifest.get('data_gaps'))
 
 

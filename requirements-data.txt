@@ -4,3 +4,4 @@ yfinance>=0.2.40
 baostock==0.9.3
 curl_cffi==0.16.3
 requests==2.34.2
+duckdb==1.5.5

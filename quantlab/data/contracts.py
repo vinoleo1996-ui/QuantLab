@@ -19,6 +19,24 @@ def timestamp(value) -> pd.Timestamp:
     return t.tz_localize("Asia/Shanghai") if t.tzinfo is None else t.tz_convert("Asia/Shanghai")
 
 
+def timestamps_series(values) -> pd.Series:
+    """Vectorize homogeneous timestamps, retaining scalar semantics for mixtures.
+
+    Naive timestamps mean China local time. Parsing all inputs with ``utc=True``
+    would silently move those observations eight hours, so mixed inputs use the
+    established scalar converter. Invalid text still raises in both paths.
+    """
+    series=values if isinstance(values,pd.Series) else pd.Series(values)
+    try:
+        parsed=pd.to_datetime(series,format='mixed')
+        if pd.api.types.is_datetime64_any_dtype(parsed.dtype):
+            return parsed.dt.tz_localize('Asia/Shanghai') if parsed.dt.tz is None else parsed.dt.tz_convert('Asia/Shanghai')
+    except (ValueError,TypeError):
+        pass
+    converted=series.map(lambda value: timestamp(value) if pd.notna(value) else pd.NaT)
+    return pd.to_datetime(converted,utc=True).dt.tz_convert('Asia/Shanghai')
+
+
 def decision_time(date) -> pd.Timestamp:
     return timestamp(pd.Timestamp(date).normalize()) + pd.Timedelta(hours=18)
 
@@ -46,8 +64,8 @@ def asof_records(history: pd.DataFrame, as_of, effective=None) -> pd.DataFrame:
     t = timestamp(as_of)
     e = timestamp(effective) if effective is not None else t
     h = history.drop_duplicates().copy()
-    h["available_at"] = h.available_at.map(timestamp)
-    h["effective_at"] = h.effective_at.map(timestamp)
+    h["available_at"] = timestamps_series(h.available_at)
+    h["effective_at"] = timestamps_series(h.effective_at)
     h = h[(h.available_at <= t) & (h.effective_at <= e)]
     if h.duplicated(["instrument_id", "available_at", "effective_at"]).any():
         raise DataContractError("ambiguous_instrument_revision")
@@ -94,14 +112,19 @@ class MarketDataset:
     exposures: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
     evidence_root: Path | None = field(default=None, repr=False)
+    industry_records: pd.DataFrame = field(default_factory=pd.DataFrame)
+    financials: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def version(self):
+        extra = {}
+        if not self.industry_records.empty: extra["industry_records"] = frame_hash(self.industry_records)
+        if not self.financials.empty: extra["financials"] = frame_hash(self.financials)
         return fingerprint({"manifest": self.manifest,
                             "panels": {k: frame_hash(v) for k, v in sorted(self.panels.items())},
                             "history": frame_hash(self.instruments), "actions": frame_hash(self.actions),
                             "calendar": list(self.calendar), "benchmark": frame_hash(self.benchmark),
-                            "announcements": frame_hash(self.announcements), "exposures": frame_hash(self.exposures)})
+                            "announcements": frame_hash(self.announcements), "exposures": frame_hash(self.exposures), **extra})
 
     def validate(self, profile="strict") -> list[str]:
         if profile not in ("strict", "free_research"): raise ValueError("unknown_data_profile")
@@ -121,8 +144,19 @@ class MarketDataset:
             asof_records(self.instruments, m.get("as_of", pd.Timestamp.today()))
             for _, row in self.instruments.iterrows(): InstrumentRules.from_record(row)
             for name in ("active", "is_st", "listing_date", "sector"):
-                if name not in self.instruments or self.instruments[name].isna().any(): errors.append("security_history_missing:"+name)
+                if name not in self.instruments:
+                    errors.append("security_history_missing:"+name)
+                elif profile == "strict" and self.instruments[name].isna().any():
+                    errors.append("security_history_missing:"+name)
+            if profile == "free_research" and "listing_date" in self.instruments:
+                unknown = self.instruments.listing_date.isna()
+                observed = self.instruments.get("observation_start", pd.Series(index=self.instruments.index, dtype=object))
+                if (unknown & observed.isna()).any(): errors.append("security_history_missing:observation_start")
         except (ValueError, TypeError) as exc: errors.append(str(exc))
+        mode = m.get("industry_mode", "verified_pit")
+        if mode not in ("verified_pit", "effective_date_proxy", "disabled"):
+            errors.append("unknown_industry_mode")
+        if profile == "strict" and mode == "effective_date_proxy": errors.append("industry_proxy_not_PIT")
         for code, p in self.panels.items():
             if not {"open", "close", "available_at", "source", "revision", "quality_status", "open_status", "open_status_available_at"}.issubset(p):
                 errors.append(f"bar_contract_missing:{code}")
@@ -156,7 +190,7 @@ class MarketDataset:
 
     def known_panels(self, date):
         t = decision_time(date)
-        return {c: p.loc[(p.index <= pd.Timestamp(date)) & p.available_at.map(timestamp).le(t)].copy()
+        return {c: p.loc[(p.index <= pd.Timestamp(date)) & timestamps_series(p.available_at).le(t)].copy()
                 for c, p in self.panels.items()}
 
 
@@ -183,7 +217,48 @@ def load_dataset(path: str | Path, profile="strict") -> MarketDataset:
                             dated(read(m["benchmark"])),
                             read(m["announcements"]) if m.get("announcements") else pd.DataFrame(),
                             read(m["exposures"]) if m.get("exposures") else pd.DataFrame(), m)
+    dataset.evidence_root = root
+    dataset.industry_records = read(m["industry_records"]) if m.get("industry_records") else pd.DataFrame()
+    dataset.financials = read(m["financials"]) if m.get("financials") else pd.DataFrame()
     errors = dataset.validate(profile)
     if errors: raise DataContractError("; ".join(errors))
-    dataset.evidence_root = root
     return dataset
+
+
+def dump_dataset(dataset: MarketDataset, directory: str | Path) -> Path:
+    """Write a new content-addressed dataset, including optional evidence tables.
+
+    Existing snapshots are never overwritten. Optional tables absent from old
+    manifests remain empty on load, preserving the original public constructor.
+    """
+    import shutil
+    import tempfile
+    directory=Path(directory).resolve();directory.mkdir(parents=True,exist_ok=True)
+    temporary=Path(tempfile.mkdtemp(prefix='.dataset-',dir=directory))
+    try:
+        manifest=dict(dataset.manifest)
+        for name in ('snapshot_id','panels','instruments','calendar','actions','benchmark','announcements','exposures','industry_records','financials'):
+            manifest.pop(name,None)
+        def write(name,frame):
+            path=temporary/(name+'.parquet');path.parent.mkdir(parents=True,exist_ok=True)
+            frame.to_parquet(path)
+            return dict(path=str(path.relative_to(temporary)),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        manifest['panels']={code:write('panels/'+code,p) for code,p in sorted(dataset.panels.items())}
+        manifest['instruments']=write('instruments',dataset.instruments)
+        manifest['calendar']=write('calendar',pd.DataFrame({'session':dataset.calendar}))
+        manifest['benchmark']=write('benchmark',dataset.benchmark)
+        for name in ('actions','announcements','exposures','industry_records','financials'):
+            frame=getattr(dataset,name)
+            if not frame.empty:manifest[name]=write(name,frame)
+        identity=fingerprint(manifest);manifest['snapshot_id']=identity
+        path=temporary/'manifest.json'
+        path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
+        target=directory/identity[:24]
+        if target.exists():
+            if (target/'manifest.json').read_bytes()!=path.read_bytes():raise DataContractError('snapshot_collision')
+            shutil.rmtree(temporary)
+        else:temporary.rename(target)
+        return target/'manifest.json'
+    except BaseException:
+        if temporary.exists():shutil.rmtree(temporary)
+        raise
