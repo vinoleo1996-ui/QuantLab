@@ -13,7 +13,7 @@ from quantlab.data.exchange_rules import limit_ratio,limit_prices,RULE_VERSION
 
 def build(raw,root):
     raw,root=Path(raw),Path(root);root.mkdir(parents=True,exist_ok=True)
-    spec=json.loads((raw/'cohort.json').read_text());gaps=[];sources={}
+    spec=json.loads((raw/'cohort.json').read_text());gaps=[];execution_gaps=[];sources={}
     def read(name):
         path=raw/(name+'.csv');meta=json.loads((raw/(name+'.json')).read_text())
         if meta['error_code']!='0' or hashlib.sha256(path.read_bytes()).hexdigest()!=meta['sha256']:raise ValueError('invalid_download:'+name)
@@ -36,7 +36,7 @@ def build(raw,root):
         p['availability_basis']='exchange_daily_close_plus_buffer_assumed_not_vendor_ingest'
         p['open_status_available_at']=[str(d.date())+' 09:30:00' for d in p.index]
         p['open_status_basis']='daily_open_assumption';p['rule_version']=RULE_VERSION
-        p['open_status']='unknown';p['limit_up']=np.nan;p['limit_down']=np.nan
+        p['open_status']='unknown';p['open_status_reason']='';p['limit_up']=np.nan;p['limit_down']=np.nan
         # A conservative age bound, not a fabricated exact listing-session count.
         p['listing_session_lower_bound']=np.arange(len(p))+6
         if pd.Timestamp(basic.ipoDate)>pd.Timestamp(spec['start'])-pd.Timedelta(days=180):raise ValueError('cohort_not_seasoned:'+code)
@@ -47,7 +47,13 @@ def build(raw,root):
             ratio=r.limit_ratio_at_open
             if np.isfinite(ratio) and np.isfinite(r.preclose) and r.preclose>0:
                 p.loc[d,['limit_up','limit_down']]=limit_prices(r.preclose,ratio)
-                if r.tradestatus==1 and pd.notna(r.open) and r.open>0:p.loc[d,'open_status']='derived'
+                if r.tradestatus==1 and pd.notna(r.open) and r.open>0:
+                    upper,lower=p.loc[d,['limit_up','limit_down']]
+                    if lower-.005 <= r.open <= upper+.005:p.loc[d,'open_status']='derived'
+                    else:
+                        p.loc[d,'open_status_reason']='open_outside_rule_bounds'
+                        execution_gaps.append(dict(instrument_id=code,date=str(d.date()),reason='open_outside_rule_bounds',
+                            open=float(r.open),reference_price=float(r.preclose),limit_up=float(upper),limit_down=float(lower)))
                 elif r.tradestatus==0:p.loc[d,'open_status']='halted'
             if pd.isna(r.isST):gaps.append(dict(instrument_id=code,date=str(d.date()),reason='unknown_daily_st'));continue
             state=(bool(r.isST),float(ratio))
@@ -95,10 +101,10 @@ def build(raw,root):
         universe_coverage='historical',research_scope=spec,actions_coverage='public_reconciled_with_gaps' if gaps else 'public_reconciled',
         benchmark_type='index',benchmark_return_basis='price_return',panels=panels,instruments=write('instruments',pd.DataFrame(rows)),
         actions=write('actions',pd.DataFrame(actions)),calendar=write('calendar',pd.DataFrame({'session':calendar})),benchmark=write('benchmark',benchmark),
-        data_gaps=gaps,execution_assumption='daily_open_with_rule_limits_not_observed_auction',source_files=sources)
+        data_gaps=gaps,execution_gaps=execution_gaps,execution_assumption='daily_open_with_rule_limits_not_observed_auction',source_files=sources)
     (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
     report=dict(securities=len(panels),bars=sum(m['rows'] for n,m in sources.items() if n.endswith('_daily')),actions=len(actions),
-        distribution_rows_by_security=event_counts,gaps=gaps,manifest=str(root/'manifest.json'))
+        distribution_rows_by_security=event_counts,gaps=gaps,execution_gaps=execution_gaps,manifest=str(root/'manifest.json'))
     (root/'import_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps({k:v for k,v in report.items() if k not in ('gaps','distribution_rows_by_security')}|{'gaps':len(gaps)},ensure_ascii=False))
 
 

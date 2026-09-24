@@ -81,10 +81,12 @@ def research_assessment(ds, *, require_industry=False):
     warnings=['public_data_revisions_not_independently_verified','opening_capacity_unverified']
     if not industry:warnings.append('industry_disabled_unknown_exposure_capped')
     if ds.manifest.get('actions_coverage')!='complete':warnings.append('accounting_coverage_unverified')
+    if ds.manifest.get('execution_gaps'):warnings.append('opening_rule_conflicts:'+str(len(ds.manifest['execution_gaps'])))
     if any(p.get('open_status',pd.Series(dtype=str)).eq('derived').any() for p in ds.panels.values()):
         warnings.append('daily_open_execution_is_explicit_assumption')
     return dict(status='blocked_data' if reasons else 'research_ready',reasons=sorted(set(reasons)),
         warnings=warnings,data_version=ds.version,promotion_approved=False,
+        execution_gaps=ds.manifest.get('execution_gaps',[]),
         modules=dict(price_volume=not reasons,industry=industry,announcements=False,execution_capacity=False),
         accounting_verified=ds.manifest.get('actions_coverage')=='complete' and not ds.manifest.get('data_gaps'))
 

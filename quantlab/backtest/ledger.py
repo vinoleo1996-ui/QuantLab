@@ -64,6 +64,8 @@ def trade_permission(bar, rule: InstrumentRules, side, date, *, allow_open_assum
         upper,lower=limit_prices(ref,ratio,rule.price_tick)
         if any(not np.isfinite(bar.get(k,np.nan)) or abs(bar[k]-v)>rule.price_tick/10 for k,v in [('limit_up',upper),('limit_down',lower)]):
             return False,'derived_limit_mismatch'
+        if px < lower-rule.price_tick/2 or px > upper+rule.price_tick/2:
+            return False,'derived_open_outside_rule_bounds'
     if bar.get("open_status") != "trading" and not derived: return False, "unknown_or_halted_open"
     when = bar.get("open_status_available_at")
     if when is None or pd.isna(when) or timestamp(when) > timestamp(date) + pd.Timedelta(hours=9, minutes=30):

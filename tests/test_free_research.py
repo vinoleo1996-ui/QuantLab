@@ -40,6 +40,21 @@ class LayeredResearch(unittest.TestCase):
         self.assertIsNone(limit_ratio('600001','2023-04-10',False,1))
         self.assertEqual(limit_prices(10.05,.1),(11.06,9.05))
 
+    def test_rule_conflicting_open_cannot_be_clipped_into_a_fill(self):
+        from quantlab.backtest.ledger import trade_permission
+        from quantlab.data.contracts import InstrumentRules
+        from dataclasses import replace
+        ds=dataset();d=ds.calendar[0]
+        rule=replace(InstrumentRules.from_record(ds.instruments.iloc[0]),instrument_id='sh.600225')
+        bar=ds.panels['S000'].iloc[0].to_dict()
+        bar.update(open_status='derived',open_status_basis='daily_open_assumption',rule_version='cn_daily_v1',
+                   is_st_at_open=False,listing_session_lower_bound=60,reference_price=1.24,limit_up=1.36,limit_down=1.12)
+        for price in (.62,1.50):
+            bar['open']=price
+            for side in ('buy','sell'):
+                self.assertEqual(trade_permission(bar,rule,side,d,allow_open_assumption=True),
+                                 (False,'derived_open_outside_rule_bounds'))
+
     def test_missing_equity_event_excludes_labels_but_not_earlier_features(self):
         from quantlab.strategy.opportunity import forward_labels,opportunity_features
         ds=dataset(days=360,stocks=6);before=opportunity_features(ds,profile='price_volume')
