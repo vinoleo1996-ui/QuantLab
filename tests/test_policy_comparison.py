@@ -16,7 +16,7 @@ from fixtures_v2 import dataset
 from quantlab.policy_comparison import (ARMS, CONTRASTS, REFERENCE_ARMS, frozen_protocol,
     account_checks, stress_windows, verdict, _stress_dataset, experiment_health, lagged_budget_attribution,
     STRESS_NAMES, comparison_payload, summarize_run, run_stress_suite, recorded_stress_results,
-    validate_stress_artifact, _record_once)
+    validate_stress_artifact, _record_once, run_comparison)
 from quantlab.config import Config
 from quantlab.research import ExperimentRegistry
 from quantlab.report.runs import persist_run, atomic_json
@@ -202,6 +202,40 @@ def small_account_run():
 
 
 class PolicyComparisonHealthAndResumeTests(unittest.TestCase):
+    def test_primary_checkpoint_resumes_without_replaying_or_changing_protocol(self):
+        ds=dataset(days=30,stocks=2)
+        arms={name:ARMS[name] for name in ('U30P0','U5P0')}
+        runs=[]
+        for name in arms:
+            run=small_account_run()
+            run['run_id']='small-'+name
+            run['config']['fixture_case']=name
+            runs.append(run)
+        with tempfile.TemporaryDirectory() as temp, \
+             patch('quantlab.policy_comparison.load_dataset',return_value=ds), \
+             patch('quantlab.policy_comparison.research_assessment',return_value=dict(status='research_ready',accounting_verified=True,warnings=[])), \
+             patch('quantlab.policy_comparison.ARMS',arms), \
+             patch('quantlab.policy_comparison.CONTRASTS',{'universe':('U5P0','U30P0')}), \
+             patch('quantlab.backtest.engine.prepare',return_value={}), \
+             patch('quantlab.backtest.engine.Engine.run_dataset',side_effect=runs) as replay:
+            primary=run_comparison('fixture',temp,run_stress=False,stop_after_primary=True)
+            self.assertEqual(replay.call_count,2)
+            self.assertEqual(primary['status'],'primary_completed_pending_validation')
+            root=Path(primary['artifact_directory'])
+            protocol=(root/'protocol.json').read_bytes()
+            archive=(root/'source.tar.gz').read_bytes()
+            self.assertFalse((root/'summary.json').exists())
+            self.assertEqual(set(json.loads((root/'outcomes.json').read_text())),set(arms))
+            self.assertEqual(set(json.loads((root/'primary_summary.json').read_text())['runs']),set(arms))
+            final=run_comparison('fixture',temp,run_stress=False)
+            self.assertEqual(replay.call_count,2)
+            self.assertEqual(final['run_id'],primary['run_id'])
+            self.assertEqual((root/'protocol.json').read_bytes(),protocol)
+            self.assertEqual((root/'source.tar.gz').read_bytes(),archive)
+            self.assertEqual(set(final['runs']),set(arms))
+            self.assertEqual(set(final['references']),set(REFERENCE_ARMS))
+            self.assertTrue((root/'summary.json').exists())
+
     def test_healthy_candidate_cannot_pass_against_a_broken_control(self):
         healthy = dict(accounting={'passed': True}, experiment_health={'passed': True},
             run_health=dict(allocation_failures=0, forecast_failures=0, data_issue_count=0),

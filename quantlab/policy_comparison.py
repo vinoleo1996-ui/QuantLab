@@ -515,7 +515,7 @@ def verdict(summary, comparison, ci20, ci60, stress, *, data_assessment, control
 
 
 def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
-                   run_stress=True, reference_audit=None):
+                   run_stress=True, reference_audit=None, stop_after_primary=False):
     """Freeze, register and replay. Call only after all implementation is frozen."""
     from quantlab.backtest.engine import Engine, prepare
     ds = load_dataset(manifest, profile='free_research')
@@ -532,9 +532,10 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
     if (root / 'protocol.json').exists() and json.loads((root / 'protocol.json').read_text()) != json.loads(json.dumps(frozen, default=str)):
         raise ValueError('protocol_already_frozen_differently')
     atomic_json(root / 'protocol.json', frozen)
-    with tarfile.open(root / 'source.tar.gz', 'w:gz') as archive:
-        for file in sorted([*(ROOT / 'quantlab').rglob('*.py'), *(ROOT / 'scripts').glob('*.py')]):
-            archive.add(file, arcname=str(file.relative_to(ROOT)))
+    if not (root / 'source.tar.gz').exists():
+        with tarfile.open(root / 'source.tar.gz', 'w:gz') as archive:
+            for file in sorted([*(ROOT / 'quantlab').rglob('*.py'), *(ROOT / 'scripts').glob('*.py')]):
+                archive.add(file, arcname=str(file.relative_to(ROOT)))
     registry = ExperimentRegistry(root / 'registry')
     registered = {name: registry.register('policy_attribution', spec, data_version, 'fixed', protocol['version'])
                   for name, spec in ARMS.items()}
@@ -601,7 +602,30 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
         _record_once(registry, registered[name], outcome)
         outcomes[name] = outcome
         atomic_json(outcomes_path, outcomes)
+        print('[policy] saved', name, outcome['status'], flush=True)
         if provenance() != source: raise ValueError('source_or_environment_changed_during_replay')
+    # Release the caller's process between phases without changing the protocol
+    # or recording absent reference evidence as an immutable completed outcome.
+    primary = dict(run_id=identity,status='primary_completed_pending_validation',
+        data_version=data_version,model_version=protocol['version'],as_of=end,
+        artifact_directory=str(root),runs=summaries,completed_primary=[k for k in ARMS if k in outcomes],
+        failed={k:v for k,v in outcomes.items() if k in ARMS and v['status'] in ('failed','blocked_data')},
+        promotion_approved=False,source_unchanged=provenance()==source,
+        remaining=['reference_source_audit','paired_statistics','registered_stress','adjudication'])
+    atomic_json(root/'primary_summary.json',primary)
+    lines=['# 主研究阶段结果','',
+        '预登记主配置已回放；参考、统计和压力尚未全部完成，不据此采用策略。条件收益的数据缺口见每组run_health。','',
+        '| 配置 | 状态 | 净利润 | 年化 | 最大回撤 | 平均仓位 | 平均持仓数 | 费用及滑点 | 数据问题 |',
+        '|---|---|---:|---:|---:|---:|---:|---:|---:|']
+    for name in ARMS:
+        summary=summaries.get(name,{})
+        metrics=summary.get('conditional_metrics')
+        if metrics:
+            lines.append(f"| {name} | {summary['status']} | {summary['net_profit']:,.2f} | {metrics['annual_return']:.2%} | {metrics['max_drawdown']:.2%} | {summary['average_gross']:.2%} | {summary['average_holdings']:.1f} | {summary['fees']+summary['slippage']:,.2f} | {summary['run_health'].get('data_issue_count',0)} |")
+        else:
+            lines.append(f"| {name} | {outcomes[name]['status']}: {outcomes[name].get('reason','')} | — | — | — | — | — | — | — |")
+    (root/'PRIMARY_RESULTS.md').write_text('\n'.join(lines)+'\n')
+    if stop_after_primary:return primary
     audit = json.loads(Path(reference_audit).read_text()) if reference_audit else {}
     for name in REFERENCE_ARMS:
         if name not in outcomes:
