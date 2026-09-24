@@ -283,34 +283,56 @@ class Ledger:
             stamp = notional * (0.001 if pd.Timestamp(date) < pd.Timestamp("2023-08-28") else 0.0005) * self.cost_mult
         return money(commission), money(stamp)
 
+    def _record_execution_shortfall(self, order, date, session, reason, *, filled_quantity=0,
+                                    causes=(), context=None):
+        # Append a value snapshot: a later fill may clear the order's current
+        # reject_reason, but must not erase a previous execution attempt.
+        details = {}
+        for key, value in (context or {}).items():
+            if isinstance(value, np.generic): value = value.item()
+            details[key] = None if isinstance(value, float) and not math.isfinite(value) else value
+        self.events.append(dict(type='execution_rejected', date=str(pd.Timestamp(date).date()),
+            session=int(session), order_id=order.order_id, instrument_id=order.instrument_id,
+            side=order.side, remaining=order.remaining, reason=reason,
+            outcome='partial' if filled_quantity else 'unfilled', filled_quantity=filled_quantity,
+            attempted_quantity=order.remaining+filled_quantity,
+            causes=list(dict.fromkeys(causes or (reason,))), execution_context=details))
+
     def execute(self, date, session, bars, rules, adv, can_buy=None):
         self.mark(date, {c: b.get("open", np.nan) for c, b in bars.items()}, "open")
         for o in sorted(self.orders, key=lambda x: (x.side != "sell", x.order_id)):
             if o.status not in ("pending", "partial") or pd.Timestamp(o.signal_date) >= pd.Timestamp(date): continue
             if o.execute_not_before_session is not None and session<o.execute_not_before_session: continue
             c, side = o.instrument_id, o.side
+            source_bar = bars.get(c, {})
+            context = {key: source_bar.get(key) for key in ('open', 'reference_price', 'limit_up', 'limit_down')}
+            context['raw_open'] = context.pop('open')
             rule = rules.get(c)
             if rule is None:
                 o.reject_reason = "unknown_rules"
+                self._record_execution_shortfall(o,date,session,o.reject_reason,context=context)
                 continue
             allowed, why = trade_permission(bars.get(c), rule, side, date,allow_open_assumption=self.allow_open_assumption)
             if not allowed:
                 o.reject_reason = why
-                self.events.append(dict(type='execution_rejected',date=str(pd.Timestamp(date).date()),
-                    order_id=o.order_id,instrument_id=c,side=side,remaining=o.remaining,reason=why))
+                self._record_execution_shortfall(o,date,session,why,context=context)
                 if side == "buy": o.status = "expired"
                 continue
             a = adv.get(c, np.nan)
+            context['prior_average_daily_amount'] = a
             if not np.isfinite(a) or a <= 0:
                 o.reject_reason = "missing_prior_liquidity"
+                self._record_execution_shortfall(o,date,session,o.reject_reason,context=context)
                 if side == "buy": o.status = "expired"
                 continue
             px0 = float(bars[c]["open"])
             px = px0 * (1 + self.slippage * self.cost_mult * (1 if side == "buy" else -1))
             px = float((Decimal(str(px))/Decimal(str(rule.price_tick))).quantize(Decimal("1"),rounding=ROUND_HALF_UP))*rule.price_tick
             upper, lower = price_bounds(bars[c],rule)
+            context.update(slipped_price=px,limit_up=upper,limit_down=lower)
             if (side=='buy' and np.isfinite(upper) and px>=upper-rule.price_tick/2) or (side=='sell' and np.isfinite(lower) and px<=lower+rule.price_tick/2):
                 o.reject_reason='slippage_reaches_price_limit'
+                self._record_execution_shortfall(o,date,session,o.reject_reason,context=context)
                 if side=='buy':o.status='expired'
                 continue
             if np.isfinite(upper): px = min(px, upper)
@@ -318,20 +340,40 @@ class Ledger:
             if px <= 0: raise ValueError("invalid slipped price")
             lot = int(rule.buy_lot if side == "buy" else rule.sell_lot)
             used=sum(f["notional"] for f in self.fills if f["instrument_id"]==c and f["date"]==str(pd.Timestamp(date).date()))
-            qty = min(o.remaining, int(max(0.,a * self.participation-used) / px))
-            if side == "sell": qty = min(qty, self.available(c, session))
+            liquidity_quantity = int(max(0.,a * self.participation-used) / px)
+            causes = ['liquidity_limit'] if liquidity_quantity < o.remaining else []
+            context.update(participation_rate=self.participation,used_notional=used,
+                           liquidity_quantity=liquidity_quantity,cash_at_attempt=self.cash)
+            qty = min(o.remaining, liquidity_quantity)
+            if side == "sell":
+                available_quantity = self.available(c, session)
+                context['available_quantity'] = available_quantity
+                if available_quantity < qty: causes.append('settlement_limit')
+                qty = min(qty, available_quantity)
             # Odd lots may only be sold as the entire remaining position.
-            if side == "buy" or qty < self.quantity(c): qty = qty // lot * lot
+            if side == "buy" or qty < self.quantity(c):
+                if qty % lot: causes.append('lot_rounding')
+                qty = qty // lot * lot
             reserve = self.nav() * self.cash_buffer
+            context['cash_reserve'] = reserve
             if side == "buy":
-                qty = min(qty, max(0, int((self.cash - reserve) / px)) // lot * lot)
+                cash_quantity = max(0, int((self.cash - reserve) / px)) // lot * lot
+                context['affordable_quantity_before_fees'] = cash_quantity
+                if cash_quantity < qty: causes.append('cash_limit')
+                qty = min(qty, cash_quantity)
                 while qty > 0:
                     commission, stamp = self.fee(date, rule, side, qty * px)
                     valid_cash = qty * px + commission + stamp <= self.cash - reserve + 0.001
-                    if valid_cash and (can_buy is None or can_buy(c, qty, px, commission + stamp, self)): break
+                    if valid_cash:
+                        if can_buy is None or can_buy(c, qty, px, commission + stamp, self): break
+                        # The callback can reject eligibility, risk, or exposure;
+                        # a boolean result cannot identify which one failed.
+                        causes.append('buy_permission_rejected')
+                    else: causes.append('cash_limit')
                     qty -= lot
             if qty <= 0:
                 o.reject_reason = "cash_or_exposure_limit" if side == "buy" else "settlement_or_liquidity_limit"
+                self._record_execution_shortfall(o,date,session,o.reject_reason,causes=causes,context=context)
                 if side == "buy": o.status = "expired"
                 continue
             notional = money(qty * px)
@@ -339,7 +381,10 @@ class Ledger:
             dividend_tax = self.dividend_tax(c,qty,session,date) if side=="sell" else 0.
             fees = money(commission + stamp + dividend_tax)
             if side=="sell" and self.cash+notional-fees<0:
-                o.reject_reason="insufficient_cash_for_tax";continue
+                o.reject_reason="insufficient_cash_for_tax"
+                context.update(notional=notional,fees=fees,dividend_tax=dividend_tax)
+                self._record_execution_shortfall(o,date,session,o.reject_reason,context=context)
+                continue
             if side == "buy":
                 self.cash = money(self.cash - notional - fees)
                 self.lots.setdefault(c, []).append(Lot(qty, session + int(rule.sell_delay), (notional + fees) / qty, session, str(pd.Timestamp(date).date())))
@@ -362,6 +407,9 @@ class Ledger:
                                "risk_policy":o.risk_policy,"risk_budget":o.risk_budget,"candidate":o.candidate,
                                "execution_basis": bars[c].get('open_status_basis','observed_status')})
             if side == "buy" and o.remaining: o.status, o.reject_reason = "expired", "partial_day_order"
+            if o.remaining:
+                reason = 'partial_day_order' if side == 'buy' else 'settlement_or_liquidity_limit'
+                self._record_execution_shortfall(o,date,session,reason,filled_quantity=qty,causes=causes,context=context)
         if self.cash < -0.005: raise AssertionError("negative cash")
 
     def export(self):
