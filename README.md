@@ -4,17 +4,23 @@ A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只�
 
 当前开发顺序以[策略规范](docs/STRATEGY.md)首节为准；[V3实施记录](docs/IMPLEMENTATION_V3_2026-09-24.md)保留此前状态，[数据契约](docs/DATASET_CONTRACT.md)约束研究输入。研究默认入口为`legacy_repaired`：原多因子/专家、月末评估和目标波动率配权共用现金股数账本，不需要Forecast。`opportunity`显式指定并提供预测文件。旧审查归档于docs/archive，不再维护多份现行方案。
 
-## 原策略修复与资金归因
+## 原策略与全市场机会范围
+
+24/120只固定样本仅用于历史诊断与回归测试，不代表A股机会范围。当前优先接入全历史股票目录及行情，按决策日上市资格、ST/退市状态和流动性筛选；保持原多因子/专家/月度策略，不先在小样本上继续择参。采集器和比较入口均无默认120只上限。全市场数据接入和回放尚未完成。
 
 ```bash
-.venv2/bin/python -m quantlab.cli backtest --manifest data/free_research_120/dataset/manifest.json --data-mode free_research
-.venv2/bin/python -m quantlab.cli signals --manifest data/free_research_120/dataset/manifest.json --data-mode free_research
-.venv2/bin/python -m quantlab.cli compare-legacy
+# MANIFEST替换为实际接入后的数据清单；证券数量不证明覆盖完整
+.venv2/bin/python -m quantlab.cli backtest --manifest MANIFEST --data-mode free_research
+.venv2/bin/python -m quantlab.cli compare-legacy --manifest MANIFEST
+# 仅重放旧的120只诊断样本时显式指定：
+.venv2/bin/python -m quantlab.cli compare-legacy --manifest data/free_research_120/dataset/manifest.json --diagnostic-sample
 ```
 
 `compare-legacy`固定2020-01-02至2026-06-30，运行原策略、月度等权、波动控制等权各两组行业政策。`--industry-policy omit_for_diagnostic`只在免费研究中显式关闭行业上限，保留Mandate其余限制、同跌群组与真实成交检查；不是取消全部风控，也不是获准交易。默认`enforced`保留25%行业上限。
 
-每组输出包含目标仓位、实际成交、剩余现金、限制与未成交原因、半年收益、股票贡献及退出耗时。120只初始主板样本和缺失行业/权益信息使结果仍属条件研究；修复版不是旧14.62%的精确复刻，也不因此成为已证明盈利的策略。
+每组输出包含逐日合格股票数量、目标仓位、实际成交、剩余现金、限制与未成交原因、半年收益、股票贡献及退出耗时。旧120只结果仍属条件诊断；修复版不是旧14.62%的精确复刻，也不因此成为已证明盈利的策略。
+
+已有本地大库的只读盘点工具：`scripts/audit_local_market.py --database DB --sample-raw data/free_research_120/raw`（使用装有DuckDB的Python）。它导出候选目录及覆盖/价量对账记录，不将Qlib上市日期、复权因子或当前行业直接当作历史已验证事实。
 
 ## 环境与验证
 
@@ -34,22 +40,21 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 ### 免费数据首轮回放
 
 ```bash
-# 安装requirements-data.txt中的baostock适配器后，按历史名单固定样本并抓取
-.venv2/bin/python scripts/collect_free_research.py
-.venv2/bin/python scripts/build_free_dataset.py
-.venv2/bin/python -m quantlab.cli data-audit --manifest data/free_research/dataset/manifest.json --data-mode free_research --feature-profile price_volume
-.venv2/bin/python -m quantlab.cli free-research
+# 优先复用通过核验的本地行情，仅对缺口补采。CATALOG须包含完整历史候选范围。
+# 不传--count时采集目录内所有A股代码，不按2014年或主板截断。
+.venv2/bin/python scripts/collect_free_research.py --members CATALOG --output data/free_market/raw
+# 交易规则与权益字段补齐后再生成回放数据；目录齐全不等于行情/规则齐全。
+.venv2/bin/python scripts/build_free_dataset.py --raw data/free_market/raw --output data/free_market/dataset
 ```
 
-24只样本在2014历史名单中按固定种子预选，保留后来退市证券；它不是全市场选股证据。复用`pit_liquidity`池和同一现金账本，先运行市场残差趋势与上涨质量；行业模块关闭，未知行业统一按25%总仓位上限约束。模型固定Ridge1、训练2017—2019、2020起回放，未做参数择优，不冒充36/6/6正式滚动检验。
+此前24只样本及Ridge实验保留作历史诊断，不再作为当前开发主线。历史资格＋流动性池不要求历史市值全覆盖；行业、公告及执行容量分别验收。当前未核实的行业仍不得用今天的行业回填历史。
 
 输出`conditional_metrics`是公开数据与日线开盘假设下的账面路径，`metrics=null`、`promotion_approved=false`。退市末价只用于带陈旧标记的估值，不结算成现金；缺失权益不声称损失有界。行业、公告和执行容量分别验收，不再要求首轮把所有模块的数据一次补齐。
 
 ### 扣费收益与稳定性对照
 
 ```bash
-.venv2/bin/python scripts/collect_free_research.py --output data/free_research_120/raw --count 120
-.venv2/bin/python scripts/build_free_dataset.py --raw data/free_research_120/raw --output data/free_research_120/dataset
+# 以下显式使用旧诊断样本，不能称为全市场策略研究：
 .venv2/bin/python -m quantlab.cli compare-strategies
 ```
 

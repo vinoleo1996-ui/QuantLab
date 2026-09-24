@@ -230,8 +230,9 @@ def main(argv: list[str] | None = None) -> None:
     free.add_argument('--output',default='output/free_research');free.add_argument('--train-start',default='2017-01-01');free.add_argument('--test-start',default='2020-01-01')
     compare=sub.add_parser('compare-strategies');compare.add_argument('--manifest',default='data/free_research_120/dataset/manifest.json')
     compare.add_argument('--output',default='output/return_comparison')
-    legacy=sub.add_parser('compare-legacy');legacy.add_argument('--manifest',default='data/free_research_120/dataset/manifest.json')
+    legacy=sub.add_parser('compare-legacy');legacy.add_argument('--manifest',required=True)
     legacy.add_argument('--output',default='output/legacy_comparison')
+    legacy.add_argument('--diagnostic-sample',action='store_true',help='Explicitly allow a bounded historical sample; never market-wide evidence')
     evidence=sub.add_parser('evidence-audit');evidence.add_argument('--bundle',required=True)
     research=sub.add_parser('research');research.add_argument('--manifest',default='data/research/manifest.json')
     research.add_argument('--protocol');research.add_argument('--output',default='output/research_v3')
@@ -242,7 +243,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd=='compare-legacy':
         from quantlab.legacy_comparison import run_comparison
         import json
-        print(json.dumps(run_comparison(args.manifest,args.output),ensure_ascii=False,default=str,indent=2));return
+        print(json.dumps(run_comparison(args.manifest,args.output,diagnostic_sample=args.diagnostic_sample),ensure_ascii=False,default=str,indent=2));return
     if args.cmd=='compare-strategies':
         import json
         from quantlab.comparison import run_comparison

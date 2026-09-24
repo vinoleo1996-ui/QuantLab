@@ -17,14 +17,28 @@ from quantlab.report.metrics import performance_table
 from quantlab.report.attribution import instrument_returns
 from quantlab.research import block_bootstrap_ci, ExperimentRegistry
 
-PROTOCOL = dict(version='legacy-repair-comparison-v1',seed=20260924,start='2020-01-02',end='2026-06-30',
+PROTOCOL = dict(version='legacy-repair-comparison-v2',seed=20260924,start='2020-01-02',end='2026-06-30',
     strategies=['legacy_repaired','monthly_equal','vol_matched_equal'],
     industry_policies=['enforced','omit_for_diagnostic'],
-    universe='frozen 120 initial-2014 mainboard cohort; not a dynamic all-market universe',
     selection='None. Fixed archived-factor baseline; no Ridge return scale or supervised fitting.',
     interpretation='Conditional retrospective public-data research. Industry exception is not a mandate change.',
     cost='Actual ledger commission/tax plus 30bp one-way slippage; no artificial zero-cost fills',
     controls='All use position/industry/downside/execution caps. Monthly equal has no drawdown/single-stock timing; volatility equal and legacy use daily risk.')
+
+
+def comparison_protocol(dataset, *, diagnostic_sample=False):
+    """Declare the input universe; a security count never proves market coverage."""
+    scope = dataset.manifest.get('research_scope', {})
+    declared = str(scope.get('scope', 'unspecified'))
+    sampled = ('cohort' in declared or 'sample' in declared
+               or scope.get('sample_size') is not None)
+    if sampled and not diagnostic_sample:
+        raise ValueError('diagnostic_sample_requires_explicit_flag; fixed samples cannot stand in for market research')
+    return dict(PROTOCOL, diagnostic_sample=bool(diagnostic_sample), universe=dict(
+        declared_scope=scope, securities_with_panels=len(dataset.panels),
+        market_coverage='not_established',
+        eligibility='historical listing age, active/ST status and prior available liquidity at each decision',
+        sampling='explicit_diagnostic_sample' if diagnostic_sample else 'no_comparison_layer_sampling'))
 
 
 def account_statistics(run):
@@ -55,6 +69,8 @@ def account_statistics(run):
         net_profit=float(states[-1]['nav']-capital),ending_equity=states[-1]['nav'],
         run_health=run['run_health'],mean_stock_weight=float(np.mean([sum(a['weights'].values()) for a in states])),
         mean_holdings=float(np.mean([len(a['quantities']) for a in states])),mean_industry_exposure=dict(sectors),
+        eligible_universe_history=[dict(date=str(pd.Timestamp(x['date']).date()),eligible_count=x.get('eligible_count'))
+                                   for x in run['risk_history']],
         fees=fees,slippage=slip,traded_notional=sum(f['notional'] for f in fills),
         traded_notional_over_mean_nav=sum(f['notional'] for f in fills)/float(np.mean([a['nav'] for a in states])),
         halfyears=half,positive_halfyears=sum(x['net_return']>0 for x in half),
@@ -64,14 +80,15 @@ def account_statistics(run):
         capital_diagnostics=run['capital_diagnostics'],allocation_issues=run['allocation_issues'],data_issues=run['data_issues'])
 
 
-def run_comparison(manifest, output):
-    ds=load_dataset(manifest,profile='free_research');assessment=research_assessment(ds,require_industry=False)
+def run_comparison(manifest, output, *, diagnostic_sample=False):
+    ds=load_dataset(manifest,profile='free_research')
+    protocol=comparison_protocol(ds,diagnostic_sample=diagnostic_sample)
+    assessment=research_assessment(ds,require_industry=False)
     if assessment['status']!='research_ready':return assessment
-    if len(ds.panels)!=120:raise ValueError('fixed_protocol_requires_120_initial_cohort')
     cfg=legacy_config(CONFIG);cfg.seed=PROTOCOL['seed'];cfg.research.feature_profile='price_volume';cfg.research.universe_mode='pit_liquidity'
-    before=provenance();identity=fingerprint(dict(protocol=PROTOCOL,config=asdict(cfg),data=ds.version,code=before))[:24]
+    before=provenance();identity=fingerprint(dict(protocol=protocol,config=asdict(cfg),data=ds.version,code=before))[:24]
     root=Path(output)/identity;root.mkdir(parents=True,exist_ok=True)
-    atomic_json(root/'protocol.json',dict(protocol=PROTOCOL,config=asdict(cfg),data_version=ds.version,provenance=before))
+    atomic_json(root/'protocol.json',dict(protocol=protocol,config=asdict(cfg),data_version=ds.version,provenance=before))
     if (root/'summary.json').exists():return json.loads((root/'summary.json').read_text())
     with tarfile.open(root/'source.tar.gz','w:gz') as archive:
         for file in sorted([*(ROOT/'quantlab').rglob('*.py'),*(ROOT/'scripts').glob('*.py'),*(ROOT/'tests').glob('*.py')]):
@@ -98,13 +115,15 @@ def run_comparison(manifest, output):
             b=runs[f'{control}__{policy}']['daily_return'];x=a-b
             paired[f'{policy}__vs_{control}']=dict(conditional=True,annualized_mean_daily_net_excess=float(x.mean()*252),
                 ci20=block_bootstrap_ci(x,seed=PROTOCOL['seed'],block=20),ci60=block_bootstrap_ci(x,seed=PROTOCOL['seed'],block=60))
-    compact={name:{k:v for k,v in stat.items() if k not in ('score_to_position_pnl','capital_diagnostics','stock_pnl','best_five_daily_returns','data_issues','allocation_issues')} for name,stat in stats.items()}
+    compact={name:{k:v for k,v in stat.items() if k not in ('score_to_position_pnl','capital_diagnostics','stock_pnl','best_five_daily_returns','data_issues','allocation_issues','eligible_universe_history')} for name,stat in stats.items()}
     summary=dict(run_id=identity,status='research_unvalidated',data_version=ds.version,model_version=PROTOCOL['version'],as_of=PROTOCOL['end'],
         metrics=None,promotion_approved=False,source_unchanged=provenance()==before,data_assessment=assessment,runs=compact,paired=paired,
-        limitations=['historical sample already examined','120 initial mainboard cohort only','unknown historical industries',
+        universe=protocol['universe'],diagnostic_sample=diagnostic_sample,
+        limitations=['historical sample already examined','market-wide coverage has not been certified','unknown historical industries',
                       'public corporate action and delisting gaps retained','daily opening capacity unverified'],artifact_directory=str(root))
     atomic_json(root/'summary.json',summary)
-    lines=['# 原策略修复：固定六组回放','',
+    lines=['# 原策略修复：同数据范围六组回放','',
+           f"输入证券数：{len(ds.panels)}；范围：{protocol['universe']['declared_scope']}；诊断样本：{diagnostic_sample}。逐日实际合格数量见各组JSON。", '',
            '条件账面结果；未证明稳定盈利，未批准实盘。行业诊断只关闭行业限制，其余权限保留。',
            '', '| 策略 | 行业政策 | 净利润(元) | 年化 | 回撤 | 平均仓位 | 费用及滑点(元) | 配权失败 | 持仓数据问题 |',
            '|---|---|---:|---:|---:|---:|---:|---:|---:|']

@@ -1,21 +1,44 @@
 #!/usr/bin/env python3
-"""Resumable public samples from a preregistered historical cohort. No replacements."""
+"""Collect a declared historical membership catalog; sampling requires --count."""
 import argparse
 import hashlib
 import json
 import socket
 import sys
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 
+def select_member_codes(members, count=None):
+    """No initial-year or mainboard restriction, and no implicit sample count.
+
+    The supplied catalog still needs lifecycle/coverage verification. Including a
+    code here does not certify provider or exchange-rule support for that code.
+    """
+    if 'code' not in members: raise ValueError('membership_catalog_requires_code')
+    if count is not None and count < 1: raise ValueError('diagnostic_count_must_be_positive')
+    def canonical(value):
+        value = str(value).lower()
+        if re.fullmatch(r'\d{6}\.(sh|sz|bj)',value):
+            symbol,exchange=value.split('.');value=exchange+'.'+symbol
+        return value
+    codes = {canonical(c) for c in members.code.dropna()}
+    pattern = r'(sh\.(600|601|603|605|688|689)\d{3}|sz\.(000|001|002|003|300|301)\d{3}|bj\.(4\d{5}|8\d{5}|92\d{4}))'
+    codes = sorted(c for c in codes if re.fullmatch(pattern,c))
+    if not codes: raise ValueError('membership_catalog_has_no_a_shares')
+    if count is not None:
+        codes = sorted(codes,key=lambda c:hashlib.sha256(('20260924:'+c).encode()).hexdigest())[:count]
+    return codes
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output', default='data/free_research/raw')
-    parser.add_argument('--members', default='output/upgrade_20260924/provider_samples/historical_securities_20140102.csv')
-    parser.add_argument('--count', type=int, default=24)
+    parser.add_argument('--output', default='data/free_market/raw')
+    parser.add_argument('--members', required=True,help='Declared historical catalog including later listings and delistings')
+    parser.add_argument('--count', type=int, default=None,help='Explicit diagnostic sample only; omitted collects all supplied A-share codes')
     parser.add_argument('--start', default='2014-01-02')
     parser.add_argument('--end', default='2026-09-23')
     parser.add_argument('--adapter-path', default=None)
@@ -24,12 +47,12 @@ def main():
     import baostock as bs
     root = Path(args.output); root.mkdir(parents=True, exist_ok=True)
     members = pd.read_csv(args.members, dtype=str)
-    # Board and cohort are known at the initial date, not selected by later survival.
-    codes = sorted(set(members.code[members.code.str.startswith(('sh.600','sh.601','sz.000','sz.002'))]),
-                   key=lambda c: hashlib.sha256(('20260924:'+c).encode()).hexdigest())[:args.count]
+    codes = select_member_codes(members,args.count)
     spec = dict(codes=codes, start=args.start, end=args.end, seed=20260924,
-                membership_date='2014-01-02', membership_sha256=hashlib.sha256(Path(args.members).read_bytes()).hexdigest(),
-                scope='fixed_initial_mainboard_cohort; not all-market or current-survivor selection')
+                membership_sha256=hashlib.sha256(Path(args.members).read_bytes()).hexdigest(),
+                membership_path=str(Path(args.members).resolve()),sample_size=args.count,
+                supplied_catalog_rows=len(members),market_coverage='not_established',
+                scope='fixed_historical_diagnostic_sample' if args.count is not None else 'provided_historical_members_no_sampling')
     path = root/'cohort.json'
     if path.exists() and json.loads(path.read_text()) != spec: raise ValueError('cohort_is_frozen')
     path.write_text(json.dumps(spec, indent=2))

@@ -220,6 +220,7 @@ class Engine:
             states.append(dict(date=d, **last_risk, industry_policy=industry_policy, actual_sector_exposure=observed_exposure.to_dict(),
                                unresolved_sector_breaches=breaches))
             eligible = p["eligible"][d]
+            states[-1]['eligible_count'] = len(eligible)
             # Stop decisions are close-time intents, never fabricated fills.
             stops = [c for c in account.quantities() if account.cost_basis(c)>0 and
                      account.marks[c] / account.cost_basis(c) - 1 < cfg.risk.stop_loss_single]
