@@ -71,11 +71,19 @@ class FactorDecisionService:
         if len(full) < 6: return ScoreDecision(str(t), "warmup", reasons=["insufficient_factors"])
         hist = self.ic.loc[self.ic.index <= t, list(full)]
         weights = pd.Series(1., index=list(full))
+        weight_evidence = {}
         for name in full:
             values = hist[name].dropna().tail(fc.ic_window)
+            evidence = dict(matured_periods=len(values),icir=None,adaptive_coefficient=1.,decay=1.,
+                            policy='insufficient_matured_ic_prior')
             if len(values) >= 24:
                 ir = values.mean() / (values.std() + 1e-9)
-                weights[name] = adaptive_weight(ir, fc.icir_floor, fc.icir_cap) * decay_penalty(values, fc.factor_decay_lookback)
+                coefficient=adaptive_weight(ir, fc.icir_floor, fc.icir_cap)
+                decay=decay_penalty(values, fc.factor_decay_lookback)
+                weights[name] = coefficient*decay
+                evidence.update(icir=float(ir),adaptive_coefficient=coefficient,decay=decay,
+                                policy='icir_linear_uniform_minimum_v2')
+            weight_evidence[name]=dict(evidence,weight=float(weights[name]))
         pen, _ = factor_crowding_penalty(hist, fc.crowding_corr_window, fc.crowding_corr_alert)
         if not pen.empty:
             pen = pen.reindex(pen.index.union([t])).sort_index().ffill().loc[[t]]
@@ -113,6 +121,7 @@ class FactorDecisionService:
         status = "ok" if len(last) >= 3 and last.nunique() > 1 else "invalid"
         trace = {"standardized_features": {k: v.loc[t].dropna().to_dict() for k, v in full.items()},
                  "factor_weights": weights.to_dict(), "expert_weights": exp,
+                 "factor_weight_evidence": weight_evidence,
                  "scores": last.to_dict(), "expert_candidates": tops, "expert_weight_policy": fc.expert_weight_policy,
                  "factor_input_basis": "price_volume_proxies_not_financial_valuations",
                  "unavailable_score_history": unavailable,

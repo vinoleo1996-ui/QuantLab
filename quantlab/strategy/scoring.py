@@ -38,16 +38,19 @@ def rolling_icir(ic: pd.Series, window: int = 60) -> pd.DataFrame:
 
 
 def adaptive_weight(icir, floor: float = 0.30, cap: float = 1.60):
-    """由 ICIR 决定因子权重：动机正则的线性映射，floor 以下压到 0.1，cap 封顶。
-    兼容标量与 Series 输入。"""
+    """ICIR线性映射后统一限制到[0.1, 1]；未知值保持未知。
+
+    floor/cap是ICIR刻度，0.1是原策略的最低因子系数。仅替换零值
+    会让刚超过floor的更强ICIR得到更低权重，故下限应用于整个映射。
+    兼容标量与Series；不改变专家权重公式或负ICIR保留最低系数的政策。
+    """
     if isinstance(icir, pd.Series):
         w = icir.clip(lower=floor, upper=cap)
         w = (w - floor) / max(cap - floor, 1e-9)
-        w[w <= 0.0] = 0.1
-        return w.rename("weight")
+        return w.clip(lower=0.1, upper=1.0).rename("weight")
     s = float(np.clip(float(icir), floor, cap))
     w = (s - floor) / max(cap - floor, 1e-9)
-    return float(w) if w > 0.0 else 0.1
+    return float(np.clip(w, 0.1, 1.0))
 
 
 def decay_penalty(ic: pd.Series, lookback: int = 24, threshold: float = 0.0) -> float:
