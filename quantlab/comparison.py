@@ -22,12 +22,13 @@ from quantlab.report.runs import atomic_json, persist_run, provenance
 from quantlab.report.metrics import performance_table
 
 
-PROTOCOL = dict(version='return-comparison-v1', seed=20260924,
+PROTOCOL = dict(version='return-comparison-v2', seed=20260924,
     cohort='120 initial-2014 mainboard securities, fixed hash priority; later delistings retained',
     split_origin='2016-07-01', frozen_train_start='2017-01-01', test_start='2020-01-01',
     train_months=36, validation_months=6, test_months=6, horizon=20,
     ridge_alphas=[.1, 1., 10.], entry_buffer=.005,
     primary='annualized mean of paired daily net returns',
+    validation_selection='Candidate annualized mean daily net return; subtracting a shared control does not change ordering. Unusable control leaves excess unavailable, without invalidating healthy candidates.',
     arms=['rolling_ridge','frozen_ridge','legacy_rank','trend_rank','rolling_buffer',
           'monthly_equal','vol_matched_equal'],
     matching='Forecast names intersect causal reference availability; ranking arms preserve every expected-return value. Account, execution, cash, fees and hard limits shared.',
@@ -83,6 +84,22 @@ def reference_scores(ds, prepared, cfg, dates):
 def mechanically_usable(run):
     h=run.get('run_health',{})
     return bool(len(run.get('nav',[]))) and not any(h.get(k,1) for k in ('allocation_failures','forecast_failures','data_issue_count'))
+
+
+def validation_objective(run, control):
+    """A broken comparator cannot turn a healthy candidate into a broken account."""
+    if not mechanically_usable(run):
+        return dict(selection_score=None,net_excess=None,comparison_status='candidate_unusable')
+    returns=run['daily_return']
+    if returns.isna().any() or not np.isfinite(returns).all():
+        return dict(selection_score=None,net_excess=None,comparison_status='candidate_returns_missing')
+    score=float(returns.mean()*252)
+    if not mechanically_usable(control):
+        return dict(selection_score=score,net_excess=None,comparison_status='control_unusable')
+    other=control['daily_return']
+    if not returns.index.equals(other.index) or other.isna().any():
+        return dict(selection_score=score,net_excess=None,comparison_status='control_dates_or_returns_missing')
+    return dict(selection_score=score,net_excess=float((returns-other).mean()*252),comparison_status='paired')
 
 
 def account_summary(run):
@@ -142,20 +159,21 @@ def run_comparison(manifest, output):
         return {d:restrict_forecast(model.predict(features,d,prepared['eligible'][d]),legacy[d],trend[d])
                 for d in dates if d in legacy}
     def replay(fc, **kwargs):
-        return engine.run(ds,forecasts=fc,prepared=prepared,data_mode='free_research',**kwargs)
+        return engine.run(ds,strategy=kwargs.pop('strategy','opportunity'),forecasts=fc,prepared=prepared,data_mode='free_research',**kwargs)
     for k,fold in enumerate(folds):
         print('[comparison] validation fold '+str(k+1)+'/'+str(len(folds)),flush=True)
         valid=fold['validation'];test=fold['test'];evaluated=[]
         control=replay(None,strategy='vol_matched_equal',start=valid[0],end=valid[-1])
+        persist_run(control,root=root/'validation_controls')
         for spec in specs:
             trial=registry.register('rolling-ridge',spec,ds.version,str(k),'comparison-v1')
             try:
                 model=OpportunityModel(**spec,profile='price_volume').fit(features,labels,fold['train'],valid[0])
                 run=replay(forecasts(model,valid),start=valid[0],end=valid[-1])
                 persist_run(run,root=root/'validation_runs')
-                pair=pd.concat([run['daily_return'],control['daily_return']],axis=1).dropna()
-                score=float((pair.iloc[:,0]-pair.iloc[:,1]).mean()*252) if mechanically_usable(run) and mechanically_usable(control) else None
-                outcome=dict(fold=str(k),status='evaluated' if score is not None else 'unusable_account',net_excess=score,summary=account_summary(run))
+                objective=validation_objective(run,control);score=objective['selection_score']
+                outcome=dict(fold=str(k),status='evaluated' if score is not None else 'unusable_account',
+                    **objective,control=account_summary(control),summary=account_summary(run))
                 if score is not None:evaluated.append((score,-spec['alpha'],spec))
             except (ValueError,KeyError) as exc:outcome=dict(fold=str(k),status='failed',reason=str(exc))
             registry.record(trial,outcome)
@@ -179,7 +197,7 @@ def run_comparison(manifest, output):
         print('[comparison] replay '+name,flush=True)
         if name=='rolling_buffer':
             buffered=deepcopy(cfg);buffered.research.entry_weight_buffer=PROTOCOL['entry_buffer']
-            run=Engine(buffered).run(ds,forecasts=rolling,start=start,end=end,data_mode='free_research')
+            run=Engine(buffered).run(ds,strategy='opportunity',forecasts=rolling,start=start,end=end,data_mode='free_research')
         elif name in fc:run=replay(fc[name],start=start,end=end)
         else:run=replay(None,strategy=name,start=start,end=end)
         persist_run(run,root=root/'runs');runs[name]=run
@@ -197,7 +215,7 @@ def run_comparison(manifest, output):
         stresses[name]=account_summary(run)
     after=provenance()
     if before!=after:raise ValueError('source_or_environment_changed_during_comparison')
-    result=dict(status='research_unvalidated',run_id=identity,data_version=ds.version,model_version='return-comparison-v1',as_of=str(end),
+    result=dict(status='research_unvalidated',run_id=identity,data_version=ds.version,model_version=PROTOCOL['version'],as_of=str(end),
         git_commit=before['git_commit'],git_dirty=before['git_dirty'],promotion_approved=False,metrics=None,
         dataset_securities=len(ds.panels),data_assessment=assessment,selection=selections,
         runs={k:account_summary(v) for k,v in runs.items()},

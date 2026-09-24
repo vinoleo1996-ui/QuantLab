@@ -11,7 +11,7 @@ import pandas as pd
 from quantlab.config import CONFIG
 from quantlab.factors.engine import FactorEngine
 from quantlab.strategy.scoring import adaptive_weight, composite_score, decay_penalty, factor_crowding_penalty, weight_row
-from quantlab.strategy.experts import experts_score
+from quantlab.strategy.experts import experts_score, expert_top_union
 
 
 @dataclass
@@ -33,16 +33,30 @@ def review_dates(calendar, rule="monthly", every_n_weeks=4):
 
 
 class FactorDecisionService:
-    def __init__(self, close, amount, turnover, calendar, cfg=None):
+    def __init__(self, close, amount, turnover, calendar, cfg=None, data_gaps=()):
         self.cfg = cfg or CONFIG
         self.close = close
+        self.calendar = pd.DatetimeIndex(calendar)
+        self.data_gaps = data_gaps
         # All transformations here are rolling or cross-sectional, with no full-sample fit.
         self.factors = FactorEngine("a", cfg=self.cfg.factors).compute(close, amount, turnover)
+        fc = self.cfg.factors
+        history = max(250,fc.momentum_lookback_long+fc.momentum_skip,fc.momentum_short+fc.momentum_skip,
+                      fc.reversal_window,fc.vol_window,fc.turnover_window,fc.crowding_hot_run)
+        # Invalid corporate-action history must not train expert IC either.
+        for gap in data_gaps:
+            start = self.calendar.searchsorted(pd.Timestamp(gap['date']))
+            end = len(self.calendar) if gap['reason']=='delisting_settlement_unverified' else start+history+1
+            for panel in self.factors.values():
+                if gap['instrument_id'] in panel:
+                    panel.loc[panel.index.intersection(self.calendar[start:end]),gap['instrument_id']] = np.nan
         self.months = review_dates(calendar, "monthly")
         self.ic = pd.DataFrame(index=self.months, columns=list(self.factors), dtype=float)
         for prev, t in zip(self.months, self.months[1:]):
             if prev not in close.index or t not in close.index: continue
             y = close.loc[t] / close.loc[prev] - 1
+            for gap in data_gaps:
+                if prev<pd.Timestamp(gap['date'])<=t and gap['instrument_id'] in y:y.loc[gap['instrument_id']]=np.nan
             for name, f in self.factors.items():
                 x = f.loc[prev].dropna()
                 pair = pd.concat([x, y.reindex(x.index)], axis=1).dropna()
@@ -75,13 +89,33 @@ class FactorDecisionService:
         except ValueError as e:
             return ScoreDecision(str(t), "invalid", reasons=[str(e)])
         if eligible is not None: last = last.reindex(eligible).dropna()
+        unavailable = {}
+        window = max(250,fc.momentum_lookback_long+fc.momentum_skip,fc.momentum_short+fc.momentum_skip,
+                     fc.reversal_window,fc.vol_window,fc.turnover_window,fc.crowding_hot_run)
+        for gap in self.data_gaps:
+            age = self.calendar.searchsorted(t)-self.calendar.searchsorted(pd.Timestamp(gap['date']))
+            if age>=0 and (gap['reason']=='delisting_settlement_unverified' or age<=window):
+                unavailable[gap['instrument_id']] = gap['reason']
+        last = last.drop(index=list(unavailable),errors='ignore')
         crowd = full.get("factor_price_crowding")
         if crowd is not None:
             low_crowd = crowd.loc[t].reindex(last.index)
             last = last[low_crowd.rank(pct=True) > (1 - fc.crowding_quantile)]
+        tops = {}
+        if fc.use_experts:
+            # Reuse the original expert-union mechanism, with causal eligible names.
+            qualified = {k:v.reindex(columns=last.index) for k,v in full.items()}
+            count = self.cfg.capital.a_share_positions+self.cfg.portfolio.n_candidates_pad+self.cfg.portfolio.turnover_rank_thresh
+            tops = expert_top_union(qualified, row, pen, None, count, cfg=fc)
+            union = sorted({c for names in tops.values() for c in names})
+            last = last.reindex(union).dropna()
+        last = last.sort_index().sort_values(ascending=False, kind='stable')
         status = "ok" if len(last) >= 3 and last.nunique() > 1 else "invalid"
         trace = {"standardized_features": {k: v.loc[t].dropna().to_dict() for k, v in full.items()},
                  "factor_weights": weights.to_dict(), "expert_weights": exp,
-                 "scores": last.to_dict(), "last_matured_ic": str(hist.index[-1]) if len(hist) else None}
+                 "scores": last.to_dict(), "expert_candidates": tops, "expert_weight_policy": fc.expert_weight_policy,
+                 "factor_input_basis": "price_volume_proxies_not_financial_valuations",
+                 "unavailable_score_history": unavailable,
+                 "last_matured_ic": str(hist.index[-1]) if len(hist) else None}
         return ScoreDecision(str(t), status, last if status == "ok" else pd.Series(dtype=float),
                              [] if status == "ok" else ["constant_or_insufficient_scores"], trace)

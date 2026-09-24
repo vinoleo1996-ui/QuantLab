@@ -27,7 +27,7 @@ def build_panels(source: str, market: str, limit: int | None = None):
     return panels, cand, feed.fetch_benchmark(market)
 
 
-def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="opportunity", forecasts=None, data_mode='strict', feature_profile=None):
+def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="legacy_repaired", forecasts=None, data_mode='strict', feature_profile=None, industry_policy='enforced'):
     from quantlab.backtest.engine import Engine, blocked_result
     from quantlab.data.contracts import load_dataset, DataContractError
     from quantlab.report.runs import persist_run, finalize_run_identity
@@ -41,14 +41,14 @@ def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="
             cfg=deepcopy(CONFIG)
             if feature_profile:cfg.research.feature_profile=feature_profile
             if data_mode=='free_research':cfg.research.universe_mode='pit_liquidity'
-            assessment=audit_manifest(path,profile=data_mode,require_industry=cfg.research.feature_profile=='price_volume_industry')
+            assessment=audit_manifest(path,profile=data_mode,require_industry=(strategy=='opportunity' and cfg.research.feature_profile=='price_volume_industry') or (data_mode=='strict' and industry_policy=='enforced'))
             if assessment['status'] not in ('qualified_for_daily_research','research_ready'):result=blocked_result(assessment['reasons'])
             else:
                 ds=load_dataset(path,profile=data_mode)
                 if isinstance(forecasts,(str,Path)):
                     from quantlab.strategy.opportunity import load_forecasts
                     forecasts=load_forecasts(forecasts,ds.version)
-                result=Engine(cfg,market=market).run(ds,strategy=strategy,forecasts=forecasts,data_mode=data_mode)
+                result=Engine(cfg,market=market).run(ds,strategy=strategy,forecasts=forecasts,data_mode=data_mode,industry_policy=industry_policy)
         except (DataContractError, KeyError, ValueError) as exc: result = blocked_result([str(exc)])
     finalize_run_identity(result)
     if save:
@@ -67,8 +67,8 @@ def cmd_fetch(args):
 def cmd_backtest(args):
     from quantlab.report.html import build_html_report
     result = run_backtest(args.source, args.market, manifest=getattr(args, "manifest", None),
-                          strategy=getattr(args, "strategy", "opportunity"), forecasts=getattr(args,"forecasts",None),
-                          data_mode=getattr(args,'data_mode','strict'),feature_profile=getattr(args,'feature_profile',None))
+                          strategy=getattr(args, "strategy", "legacy_repaired"), forecasts=getattr(args,"forecasts",None),
+                          data_mode=getattr(args,'data_mode','strict'),feature_profile=getattr(args,'feature_profile',None),industry_policy=args.industry_policy)
     folder = Path(result["artifact_directory"])
     report = build_html_report(result, title="QuantLab 研究验证报告", out=folder / "report.html")
     _print_perf(result)
@@ -78,6 +78,7 @@ def cmd_backtest(args):
 def _print_perf(result):
     from quantlab.report.metrics import performance_table
     print("[run_health]", result.get("run_health", {}))
+    print('[industry_policy]',result.get('industry_policy'),result.get('research_exceptions',[]))
     print("[status]", result.get("status", "legacy_unvalidated"), result.get("reasons", []))
     if result.get("status") in ("blocked_data", "unverified_data_gaps") or (result.get("run_health") and not result["run_health"]["research_interpretable"]):
         print("[performance] 未验证，绩效指标不发布")
@@ -88,7 +89,7 @@ def _print_perf(result):
 
 
 def signal_payload(result):
-    meta = {k: result.get(k) for k in ("run_id", "data_version", "model_version", "as_of", "status", "reasons", "data_mode", "data_assessment")}
+    meta = {k: result.get(k) for k in ("run_id", "data_version", "model_version", "as_of", "status", "reasons", "data_mode", "data_assessment", "industry_policy", "research_exceptions")}
     meta.update(promotion_approved=False, account_type="simulation", executable=False)
     if result.get("status") != "research_unvalidated":
         return dict(meta, signal_date=None, exec_date=None, trades=[], orders=[])
@@ -115,7 +116,7 @@ def cmd_signals(args):
     import json
     from quantlab.report.runs import persist_run
     result = run_backtest(args.source, args.market, save=False, manifest=getattr(args, "manifest", None), strategy=args.strategy, forecasts=args.forecasts,
-                          data_mode=args.data_mode,feature_profile=args.feature_profile)
+                          data_mode=args.data_mode,feature_profile=args.feature_profile,industry_policy=args.industry_policy)
     folder = persist_run(result)
     payload = signal_payload(result)
     out = folder / "signals.json"
@@ -147,7 +148,7 @@ def cmd_monitor(args):
     import json
     from quantlab.strategy.monitor import daily_expert_pulse
     result = daily_expert_pulse(args.limit, manifest=getattr(args, "manifest", None), strategy=args.strategy, forecasts=args.forecasts,
-                               data_mode=args.data_mode,feature_profile=args.feature_profile)
+                               data_mode=args.data_mode,feature_profile=args.feature_profile,industry_policy=args.industry_policy)
     print(json.dumps(result, ensure_ascii=False, default=str, indent=2))
 
 
@@ -216,7 +217,8 @@ def main(argv: list[str] | None = None) -> None:
         sp.add_argument("--symbols", default="")
         sp.add_argument("--limit", type=int, default=25)
         sp.add_argument("--manifest", default=None, help="经过哈希校验的研究数据集清单")
-        sp.add_argument("--strategy", default="opportunity", choices=["opportunity", "buy_hold", "monthly_equal", "vol_matched_equal"])
+        sp.add_argument("--strategy", default="legacy_repaired", choices=["legacy_repaired", "opportunity", "buy_hold", "monthly_equal", "vol_matched_equal"])
+        sp.add_argument('--industry-policy', choices=['enforced','omit_for_diagnostic'], default='enforced')
         sp.add_argument("--forecasts",default=None,help="研究流水线冻结的预测文件")
         sp.add_argument('--data-mode',choices=['strict','free_research'],default='strict')
         sp.add_argument('--feature-profile',choices=['price_volume','price_volume_industry'],default=None)
@@ -228,6 +230,8 @@ def main(argv: list[str] | None = None) -> None:
     free.add_argument('--output',default='output/free_research');free.add_argument('--train-start',default='2017-01-01');free.add_argument('--test-start',default='2020-01-01')
     compare=sub.add_parser('compare-strategies');compare.add_argument('--manifest',default='data/free_research_120/dataset/manifest.json')
     compare.add_argument('--output',default='output/return_comparison')
+    legacy=sub.add_parser('compare-legacy');legacy.add_argument('--manifest',default='data/free_research_120/dataset/manifest.json')
+    legacy.add_argument('--output',default='output/legacy_comparison')
     evidence=sub.add_parser('evidence-audit');evidence.add_argument('--bundle',required=True)
     research=sub.add_parser('research');research.add_argument('--manifest',default='data/research/manifest.json')
     research.add_argument('--protocol');research.add_argument('--output',default='output/research_v3')
@@ -235,6 +239,10 @@ def main(argv: list[str] | None = None) -> None:
         fp=sub.add_parser(name);fp.add_argument('--book',required=True);fp.add_argument('--model-version',required=True)
         fp.add_argument('--manifest',default='data/research/manifest.json');fp.add_argument('--forecast');fp.add_argument('--fills');fp.add_argument('--model');fp.add_argument('--forecasts')
     args = p.parse_args(argv)
+    if args.cmd=='compare-legacy':
+        from quantlab.legacy_comparison import run_comparison
+        import json
+        print(json.dumps(run_comparison(args.manifest,args.output),ensure_ascii=False,default=str,indent=2));return
     if args.cmd=='compare-strategies':
         import json
         from quantlab.comparison import run_comparison

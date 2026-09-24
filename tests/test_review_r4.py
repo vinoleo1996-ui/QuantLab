@@ -35,15 +35,15 @@ class DeliveryContracts(unittest.TestCase):
         w,status=allocate(r,records,pd.get_dummies(records.sector,dtype=float).T,CONFIG)
         self.assertEqual(status,'forecast_required');self.assertEqual(w.sum(),0.)
 
-    def test_default_engine_is_opportunity_and_blocks_without_forecasts(self):
+    def test_explicit_opportunity_blocks_without_forecasts(self):
         from quantlab.backtest.engine import Engine
-        result=Engine().run(dataset())
+        result=Engine().run(dataset(),strategy='opportunity')
         self.assertEqual(result['status'],'blocked_data')
         self.assertIn('frozen_forecasts_required',result['reasons'])
 
     def test_empty_forecast_schedule_cannot_publish_zero_performance(self):
         from quantlab.backtest.engine import Engine
-        result=Engine().run(dataset(),forecasts={})
+        result=Engine().run(dataset(),strategy='opportunity',forecasts={})
         self.assertFalse(result['run_health']['research_interpretable'])
 
     def test_data_hash_includes_schema(self):

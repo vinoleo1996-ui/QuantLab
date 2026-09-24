@@ -36,6 +36,7 @@ class Order:
     reason: str
     status: str = "pending"
     reject_reason: str = ""
+    industry_policy: str = 'enforced'
 
 
 def price_bounds(bar,rule):
@@ -213,19 +214,28 @@ class Ledger:
                 o.status, o.reject_reason = "cancelled", reason
 
     def queue_targets(self, weights, signal_date, reason, rules, replace=True):
+        if any(not np.isfinite(w) or w < 0 for w in weights.values()) or sum(weights.values()) > 1 + 1e-9:
+            raise ValueError("invalid target weights")
+        # A model rebalance cannot revoke an unfilled risk exit. Reserve its
+        # remaining shares so retries neither buy them back nor duplicate sells.
+        reserved = {}
+        for o in self.orders:
+            if o.side == 'sell' and o.reason == 'risk_exit' and o.status in ('pending', 'partial'):
+                reserved[o.instrument_id] = reserved.get(o.instrument_id, 0) + o.remaining
         if replace:
             for o in self.orders:
                 if o.status in ("pending", "partial"):
+                    if o.side == 'sell' and o.reason == 'risk_exit': continue
                     o.status, o.reject_reason = "cancelled", "superseded"
-        if any(not np.isfinite(w) or w < 0 for w in weights.values()) or sum(weights.values()) > 1 + 1e-9:
-            raise ValueError("invalid target weights")
         nav = self.nav()
         for c in sorted(set(weights) | set(self.quantities())):
             rule = rules.get(c)
             if rule is None or c not in self.marks: continue
             # Share quantity locked at decision price. No implicit daily rebalancing on retries.
             target = math.floor(nav * weights.get(c, 0.0) / self.marks[c] / rule.buy_lot) * int(rule.buy_lot)
-            delta = target - self.quantity(c)
+            projected = self.quantity(c) - min(self.quantity(c), reserved.get(c, 0))
+            if reserved.get(c, 0): target = min(target, projected)
+            delta = target - projected
             if delta == 0: continue
             side = "buy" if delta > 0 else "sell"
             qty = abs(int(delta))

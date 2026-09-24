@@ -1,8 +1,20 @@
 # QuantLab
 
-A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只做多、允许现金、不加杠杆；每周评估机会、每日检查风险。**支持分层的免费真实数据研究；严格数据验收和实盘晋升仍未通过。**
+A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只做多、允许现金、不加杠杆。**开发主线为原多因子策略的缺陷修复与逐项改进；支持分层的免费真实数据研究，严格数据验收和实盘晋升仍未通过。**
 
-当前开发以[实施状态及后续顺序](docs/IMPLEMENTATION_V3_2026-09-24.md)、[策略规范](docs/STRATEGY.md)和[数据契约](docs/DATASET_CONTRACT.md)为准。旧审查和研究材料归档于docs/archive，不再维护多份现行方案。
+当前开发顺序以[策略规范](docs/STRATEGY.md)首节为准；[V3实施记录](docs/IMPLEMENTATION_V3_2026-09-24.md)保留此前状态，[数据契约](docs/DATASET_CONTRACT.md)约束研究输入。研究默认入口为`legacy_repaired`：原多因子/专家、月末评估和目标波动率配权共用现金股数账本，不需要Forecast。`opportunity`显式指定并提供预测文件。旧审查归档于docs/archive，不再维护多份现行方案。
+
+## 原策略修复与资金归因
+
+```bash
+.venv2/bin/python -m quantlab.cli backtest --manifest data/free_research_120/dataset/manifest.json --data-mode free_research
+.venv2/bin/python -m quantlab.cli signals --manifest data/free_research_120/dataset/manifest.json --data-mode free_research
+.venv2/bin/python -m quantlab.cli compare-legacy
+```
+
+`compare-legacy`固定2020-01-02至2026-06-30，运行原策略、月度等权、波动控制等权各两组行业政策。`--industry-policy omit_for_diagnostic`只在免费研究中显式关闭行业上限，保留Mandate其余限制、同跌群组与真实成交检查；不是取消全部风控，也不是获准交易。默认`enforced`保留25%行业上限。
+
+每组输出包含目标仓位、实际成交、剩余现金、限制与未成交原因、半年收益、股票贡献及退出耗时。120只初始主板样本和缺失行业/权益信息使结果仍属条件研究；修复版不是旧14.62%的精确复刻，也不因此成为已证明盈利的策略。
 
 ## 环境与验证
 
@@ -43,6 +55,8 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 在扩大后的事前样本上，按36/6/6滚动验证选择Ridge正则强度，并列报告冻结模型、旧评分排序、简单趋势排序、入场权重缓冲与等权基准。排序对照保留相同的预测收益分布；每个测试段、成本、现金、未成交、20/60日分块区间及执行压力均保留。不会自动将测试段赢家设为默认策略。
 
+2026-09-24已完成120只历史初始成员的七组对照及退出修复后的固定预测核验，见[本轮决策记录](output/exit_fix_replay/73b5fc3a624d2983ad82f480/DECISION.md)。旧排序仅是继续研究的候选；Ridge、5.5%入场缓冲均未证明改进，未晋级任何策略。普通调仓现在保留未完成的风险卖单，已知ST/失效持仓生成退出需求，实际成交仍受停牌等条件约束。
+
 ### 严格验收入口
 
 ```bash
@@ -66,7 +80,7 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 替换占位路径后使用。回测、信号和监控共用评分、预测及账本；所有输出有版本与状态。方向来自待执行订单，行情未知、跌停或现金不足仍可能不成交。信号始终标记simulation和 `executable=false`。
 
-默认且唯一主动策略为`opportunity`。没有合格数据或冻结预测则阻断；旧`repaired_legacy`入口及最小方差回退已移除。`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。新模型允许现金；完整行业配置拒绝未知行业，显式价量研究配置使用统一未知组上限。
+研究默认策略为`legacy_repaired`，原`repaired_legacy`名称不再使用。显式`opportunity`缺冻结预测就阻断，不能退回原策略；`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。原策略采用原专家温度公式，`expert_weight_policy=uncertainty`才启用独立收缩候选；该参数及差异记录在运行配置中。
 
 ## 持久前向模拟
 

@@ -54,6 +54,7 @@ class ReviewRegressions(unittest.TestCase):
         row=weight_row(pd.Series({'a':1.,'b':1.}),date)
         ic=pd.DataFrame({'a':np.tile([-.12,.2],6),'b':np.tile([-.16,.16],6)})
         cfg=deepcopy(CONFIG.factors)
+        cfg.expert_weight_policy='uncertainty'
         _,weights=experts_score(f,row,None,ic,{'a':['a'],'b':['b']},cfg=cfg)
         self.assertLess(weights['a']/weights['b'],3.)
         cfg.expert_prior_strength=100.

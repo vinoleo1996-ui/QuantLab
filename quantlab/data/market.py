@@ -18,6 +18,7 @@ def panels_for_research(dataset):
     for c, panel in dataset.panels.items():
         p = panel.reindex(dates).copy()
         available = p.available_at.map(lambda x: timestamp(x) if pd.notna(x) else pd.NaT)
+        available = pd.to_datetime(available, utc=True).dt.tz_convert('Asia/Shanghai')
         known = available.notna() & available.le(cutoffs) & p.quality_status.eq('ok')
         raw = p.close.where(known)
         # Forward total-return index: actions only affect ex-date and subsequent observations.

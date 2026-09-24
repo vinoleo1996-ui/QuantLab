@@ -24,6 +24,23 @@ class LedgerContracts(unittest.TestCase):
         a.mark("2024-01-01", {"A": 10, "B": 10})
         return a
 
+    def test_risk_exit_survives_rebalance_partial_fill_and_retry(self):
+        a=self.account();a.cash=90_000;a.lots={'A':[Lot(1000,0,10,0)]};rules={'A':RULE}
+        a.queue_targets({},'2024-01-02','risk_exit',rules)
+        original=a.orders[0]
+        a.execute('2024-01-03',1,{'A':bar('2024-01-03',status='halted')},rules,{'A':1e8})
+        a.queue_targets({'A':.5},'2024-01-03','opportunity',rules)
+        self.assertEqual(original.status,'pending')
+        self.assertFalse(any(o.side=='buy' and o.status=='pending' for o in a.orders))
+        a.execute('2024-01-04',2,{'A':bar('2024-01-04')},rules,{'A':5000})
+        self.assertEqual(a.quantity('A'),500)
+        a.queue_targets({},'2024-01-04','risk_exit',rules)
+        self.assertEqual(sum(o.remaining for o in a.orders if o.side=='sell' and o.status in ('pending','partial')),500)
+        a.execute('2024-01-05',3,{'A':bar('2024-01-05')},rules,{'A':1e8})
+        self.assertEqual(a.quantity('A'),0)
+        self.assertEqual(sum(f['quantity'] for f in a.fills),1000)
+        self.assertTrue(all(f['signal_date']=='2024-01-02' for f in a.fills))
+
     def test_full_rotation_pays_both_sides(self):
         a = self.account(); rules = {"A": RULE, "B": replace(RULE, instrument_id="B")}
         a.queue_targets({"A": .9}, "2024-01-01", "initial", rules)

@@ -7,7 +7,8 @@ ACTIVE = {
     "capital": {"init_cash", "target_positions", "a_share_positions", "rebalance_rule", "rebalance_n_weeks", "min_holding_period_days"},
     "universe": {"a_exclude_st", "a_min_mktcap_yi", "a_min_avg_amount_wan", "a_min_listing_days"},
     "data": {"cache_dir", "a_daily_adjust", "reset_cache", "history_years", "rate_limiter_sec"},
-    "portfolio": {"target_vol", "vol_est_window", "max_sector_weight", "lw_shrinkage"},
+    "portfolio": {"target_vol", "vol_est_window", "max_sector_weight", "lw_shrinkage", "weight_max_dev", "n_candidates_pad", "turnover_rank_thresh"},
+    "factors": {"ic_window", "icir_floor", "icir_cap", "momentum_lookback_long", "momentum_skip", "momentum_short", "reversal_window", "vol_window", "turnover_window", "crowding_quantile", "crowding_hot_run", "crowding_hot_ret", "crowding_corr_window", "crowding_corr_alert", "factor_decay_lookback", "expert_prior_strength", "expert_temperature_floor", "expert_weight_policy", "use_experts", "expert_ic_lookback"},
     "cost": {"a_slippage", "min_trade_value"},
     "risk": {"stop_loss_single", "drawdown_alert", "drawdown_reduce", "drawdown_exit", "drawdown_halt", "vol_reduction_factor"},
     "research": {"model_version", "feature_profile", "horizon", "train_months", "validation_months", "test_months", "max_trials",
@@ -26,7 +27,6 @@ def config_fields(cfg):
 
 def status(group, name):
     if group == "" and name in ("seed", "start_date", "benchmark_a"): return "active"
-    if group == "factors": return "archived_factor_module_only"
     if name in ACTIVE.get(group, set()): return "active"
     return "reserved_reject_overrides"
 
@@ -46,6 +46,8 @@ def validate_config(cfg):
     levels = [cfg.risk.drawdown_alert,cfg.risk.drawdown_reduce,cfg.risk.drawdown_exit,cfg.risk.drawdown_halt]
     if levels != sorted(set(levels)) or not 0<levels[0]<levels[-1]<1: raise ValueError("invalid_drawdown_levels")
     if cfg.factors.ic_window<24 or cfg.portfolio.vol_est_window<40: raise ValueError("insufficient_estimation_window")
+    if cfg.factors.expert_weight_policy not in ('original','uncertainty'):raise ValueError('unknown_expert_weight_policy')
+    if cfg.portfolio.weight_max_dev<0 or cfg.portfolio.n_candidates_pad<0 or cfg.portfolio.turnover_rank_thresh<0:raise ValueError('invalid_legacy_selection_limits')
     if cfg.research.recovery_sessions<1 or cfg.research.exit_reviews<1: raise ValueError("invalid_hysteresis")
     if min(cfg.research.risk_aversion,cfg.research.crowding_cost,cfg.research.liquidity_cost,cfg.factors.expert_prior_strength)<0 or cfg.factors.expert_temperature_floor<=0:
         raise ValueError('invalid_nonnegative_penalty')

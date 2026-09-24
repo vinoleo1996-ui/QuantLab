@@ -78,7 +78,7 @@ def build_html_report(result: dict, bench: pd.Series | None = None,
     if result.get("status", "legacy_unvalidated") in ("blocked_data", "unverified_data_gaps", "legacy_unvalidated") or (result.get("run_health") and not result["run_health"]["research_interpretable"]):
         out = out or OUTPUT_DIR / "report_v2.html"
         out.parent.mkdir(parents=True, exist_ok=True)
-        details = {k: result.get(k) for k in ("run_id", "data_version", "model_version", "as_of", "status", "reasons", "run_health")}
+        details = {k: result.get(k) for k in ("run_id", "data_version", "model_version", "as_of", "status", "reasons", "run_health", "industry_policy", "research_exceptions")}
         out.write_text('<!doctype html><meta charset="utf-8"><h1>QuantLab：数据或结果尚未验证</h1>'
                        '<p>不发布绩效指标或可执行买卖建议。</p><pre>' + escape(json.dumps(details, ensure_ascii=False, indent=2)) + '</pre>')
         return out
@@ -91,6 +91,8 @@ def build_html_report(result: dict, bench: pd.Series | None = None,
     ratios={'sharpe','calmar','beta'}
     stats_rows = [[k, (f"{v:.2f}" if k in ratios else f"{v:.2%}") if isinstance(v, float) else v]
                   for k, v in perf.items()]
+    stats_rows.append(['行业约束政策',escape(result.get('industry_policy','enforced'))])
+    stats_rows.append(['研究例外',escape(', '.join(result.get('research_exceptions',[])))])
     for name, base in result.get("baselines", {}).items():
         stats_rows += [[name + ":" + k, str(v)] for k, v in performance_table(base["nav"], base["daily_return"]).items()]
     chart = _nav_chart(nav, dd, bench, title)

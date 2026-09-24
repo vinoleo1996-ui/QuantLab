@@ -10,6 +10,33 @@ from quantlab.backtest.engine import prepare
 
 
 class MatchedComparison(unittest.TestCase):
+    def test_unhealthy_control_does_not_invalidate_healthy_candidate_selection(self):
+        from quantlab.comparison import validation_objective
+        dates=pd.bdate_range('2022-01-03',periods=4)
+        health=dict(allocation_failures=0,forecast_failures=0,data_issue_count=0)
+        def run(returns,issues=0):
+            r=pd.Series(returns,index=dates)
+            return dict(daily_return=r,nav=(1+r).cumprod(),run_health=dict(health,data_issue_count=issues))
+        a=run([.01,0,-.002,.004]);b=run([.005,0,-.002,.004])
+        good=run([.002]*4);bad=run([.002]*4,1)
+        va=validation_objective(a,good);vb=validation_objective(b,good)
+        self.assertGreater(va['selection_score'],vb['selection_score'])
+        self.assertGreater(va['net_excess'],vb['net_excess'])
+        impaired=validation_objective(a,bad)
+        self.assertEqual(impaired['selection_score'],va['selection_score'])
+        self.assertIsNone(impaired['net_excess'])
+        self.assertEqual(impaired['comparison_status'],'control_unusable')
+        self.assertIsNone(validation_objective(bad,good)['selection_score'])
+
+    def test_security_with_only_future_bars_remains_unknown(self):
+        from quantlab.data.market import panels_for_research
+        ds=dataset(days=120,stocks=3)
+        ds.manifest['as_of']=str(ds.calendar[80].date())
+        ds.panels['S000']=ds.panels['S000'].iloc[100:]
+        close,amount,turnover=panels_for_research(ds)
+        self.assertTrue(close['S000'].isna().all())
+        self.assertTrue(amount['S000'].isna().all())
+
     def test_ranking_changes_identity_not_return_distribution_or_training_cutoff(self):
         f=Forecast('2024-02-01',20,pd.Series({'a':-.01,'b':.03,'c':.02}),'ok',[],
                    '2024-01-31','frozen',{'feature_profile':'price_volume'})

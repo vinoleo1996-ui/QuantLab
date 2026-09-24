@@ -6,6 +6,24 @@ from quantlab.config import CONFIG
 
 
 class LayeredResearch(unittest.TestCase):
+    def test_inactive_held_security_keeps_a_full_exit_intent_without_quotes(self):
+        from quantlab.backtest.engine import Engine
+        from quantlab.strategy.opportunity import Forecast
+        ds=dataset(days=90);ds.manifest['source']='free_sample';ds.instruments['sector']='UNKNOWN'
+        cfg=deepcopy(CONFIG);cfg.research.feature_profile='price_volume';cfg.research.universe_mode='pit_liquidity'
+        date=ds.calendar[64];inactive=ds.calendar[66]
+        row=ds.instruments[ds.instruments.instrument_id=='S000'].iloc[0].copy()
+        row['active']=False;row['effective_at']=str(inactive.date());row['available_at']=str(inactive.date())+' 18:00:00'
+        ds.instruments=pd.concat([ds.instruments,pd.DataFrame([row])],ignore_index=True)
+        ds.panels['S000']=ds.panels['S000'].loc[:ds.calendar[65]]
+        f=Forecast(str(date),20,pd.Series({c:.20 if c=='S000' else -.1 for c in ds.panels}),'ok',[],str(ds.calendar[60]),'exit_fixture',dict(feature_profile='price_volume'))
+        run=Engine(cfg).run(ds,strategy='opportunity',forecasts={date:f},start=date,end=ds.calendar[70],data_mode='free_research',review_override=[date])
+        quantity=run['account'][-1]['quantities']['S000']
+        exits=[o for o in run['orders'] if o['instrument_id']=='S000' and o['side']=='sell' and o['status'] in ('pending','partial')]
+        self.assertEqual(sum(o['remaining'] for o in exits),quantity)
+        self.assertTrue(all(pd.Timestamp(o['signal_date'])>=inactive for o in exits))
+        self.assertTrue(any(x['reason']=='stale_close' for x in run['data_issues']))
+
     def test_missing_industry_only_disables_industry_module(self):
         from quantlab.data.qualification import research_assessment, qualification
         ds=dataset();ds.manifest['source']='free_sample';ds.instruments['sector']='UNKNOWN'
@@ -40,6 +58,17 @@ class LayeredResearch(unittest.TestCase):
         self.assertIsNone(limit_ratio('600001','2023-04-10',False,1))
         self.assertEqual(limit_prices(10.05,.1),(11.06,9.05))
 
+    def test_initial_cohort_recent_listing_is_retained_with_conservative_rule_age(self):
+        from scripts.build_free_dataset import listing_age_lower_bound
+        cal=pd.bdate_range('2014-01-02',periods=10)
+        age=listing_age_lower_bound('2013-09-18',cal,cal)
+        self.assertEqual(list(age[:6]),[1,2,3,4,5,6])
+        from quantlab.data.exchange_rules import limit_ratio
+        self.assertIsNone(limit_ratio('sz.000333',cal[0],False,age[0]))
+        self.assertEqual(limit_ratio('sz.000333',cal[5],False,age[5]),.1)
+        # Suspension/absent quotes do not reset the exchange-session count.
+        self.assertEqual(list(listing_age_lower_bound('2013-09-18',cal,cal[[0,7]])),[1,8])
+
     def test_rule_conflicting_open_cannot_be_clipped_into_a_fill(self):
         from quantlab.backtest.ledger import trade_permission
         from quantlab.data.contracts import InstrumentRules
@@ -73,7 +102,7 @@ class LayeredResearch(unittest.TestCase):
         cfg=deepcopy(CONFIG);cfg.research.feature_profile='price_volume';cfg.research.universe_mode='pit_liquidity'
         d=ds.calendar[64]
         f=Forecast(str(d),20,pd.Series({c:.20 if c=='S000' else -.1 for c in ds.panels}),'ok',[],str(ds.calendar[60]),'free_fixture',dict(feature_profile='price_volume'))
-        run=Engine(cfg).run(ds,forecasts={d:f},start=d,end=ds.calendar[65],data_mode='free_research',review_override=[d])
+        run=Engine(cfg).run(ds,strategy='opportunity',forecasts={d:f},start=d,end=ds.calendar[65],data_mode='free_research',review_override=[d])
         self.assertGreater(len(run['fills']),0)
         self.assertLessEqual(sum(run['account'][-1]['weights'].values()),.250001)
         self.assertFalse(run['promotion_approved'])

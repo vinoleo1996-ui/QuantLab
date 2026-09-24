@@ -11,6 +11,16 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from quantlab.data.exchange_rules import limit_ratio,limit_prices,RULE_VERSION
 
 
+def listing_age_lower_bound(ipo_date, calendar, dates):
+    """Retain recent initial members; unknown early listing rules prevent fills only."""
+    calendar=pd.DatetimeIndex(calendar);dates=pd.DatetimeIndex(dates)
+    ipo=pd.Timestamp(ipo_date)
+    if ipo<=calendar[0]-pd.Timedelta(days=180):
+        return np.arange(len(dates))+6
+    known=calendar[calendar>=ipo]
+    return known.searchsorted(dates,side='right')
+
+
 def build(raw,root):
     raw,root=Path(raw),Path(root);root.mkdir(parents=True,exist_ok=True)
     spec=json.loads((raw/'cohort.json').read_text());gaps=[];execution_gaps=[];sources={}
@@ -38,10 +48,9 @@ def build(raw,root):
         p['open_status_basis']='daily_open_assumption';p['rule_version']=RULE_VERSION
         p['open_status']='unknown';p['open_status_reason']='';p['limit_up']=np.nan;p['limit_down']=np.nan
         # A conservative age bound, not a fabricated exact listing-session count.
-        p['listing_session_lower_bound']=np.arange(len(p))+6
-        if pd.Timestamp(basic.ipoDate)>pd.Timestamp(spec['start'])-pd.Timedelta(days=180):raise ValueError('cohort_not_seasoned:'+code)
+        p['listing_session_lower_bound']=listing_age_lower_bound(basic.ipoDate,calendar,p.index)
         p['is_st_at_open']=p.isST
-        p['limit_ratio_at_open']=[limit_ratio(code,d,bool(r.isST) if pd.notna(r.isST) else np.nan,int(r.listing_session_lower_bound)) for d,r in p.iterrows()]
+        p['limit_ratio_at_open']=pd.Series([limit_ratio(code,d,bool(r.isST) if pd.notna(r.isST) else np.nan,int(r.listing_session_lower_bound)) for d,r in p.iterrows()],index=p.index,dtype=float)
         prev=None
         for d,r in p.iterrows():
             ratio=r.limit_ratio_at_open
@@ -56,6 +65,7 @@ def build(raw,root):
                             open=float(r.open),reference_price=float(r.preclose),limit_up=float(upper),limit_down=float(lower)))
                 elif r.tradestatus==0:p.loc[d,'open_status']='halted'
             if pd.isna(r.isST):gaps.append(dict(instrument_id=code,date=str(d.date()),reason='unknown_daily_st'));continue
+            if not np.isfinite(ratio):continue  # Remains unknown until a supported rule is available.
             state=(bool(r.isST),float(ratio))
             if state!=prev:
                 rows.append(dict(instrument_id=code,available_at=str(d.date())+' 18:00:00',effective_at=str(d.date()),

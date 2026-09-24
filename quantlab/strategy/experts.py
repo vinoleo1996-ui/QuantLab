@@ -101,7 +101,7 @@ def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
         hac=var+2*sum((1-lag/4)*max(0.,float(centered.autocorr(lag) or 0))*var for lag in range(1,min(4,n-1))) if n>3 and var>0 else var
         uncertainty[name]=np.sqrt(max(hac,0)/max(n,1))
         shrink=n/(n+cfg.expert_prior_strength)
-        smoke[name] = q*shrink if np.isfinite(q) else 0.0
+        smoke[name] = q*(shrink if cfg.expert_weight_policy=='uncertainty' else 1.) if np.isfinite(q) else 0.0
         s = _group_score(full, w_row, pen, group)
         if s is None or s.empty:
             rank_panels[name] = None
@@ -117,7 +117,8 @@ def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
         w_exp = np.full(len(live), 1.0 / len(live))
     else:
         # 自适应温度：拉开强弱专家权重阶梯，避免 IC 过小时恒等权
-        tau=max(float(np.std(q)),float(np.nanmedian([uncertainty[k] for k in live])),cfg.expert_temperature_floor)
+        tau=(max(float(np.std(q)),float(np.nanmedian([uncertainty[k] for k in live])),cfg.expert_temperature_floor)
+             if cfg.expert_weight_policy=='uncertainty' else max(float(np.std(q)),.015))
         logits=(q-q.max())/tau
         w_exp=np.exp(logits)/np.exp(logits).sum()
 

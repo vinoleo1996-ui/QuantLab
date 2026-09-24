@@ -93,7 +93,8 @@ class FactorConfig:
     factor_decay_lookback: int = 24       # 因子失效判定窗口(IC 期数)
     expert_prior_strength: float = 12.0
     expert_temperature_floor: float = 0.05
-    use_experts: bool = False              # 多专家集成打分(动量/价值/低波/流动/综合, 专家级IC加权)
+    expert_weight_policy: str = 'original'  # original | uncertainty；后者为独立收缩候选
+    use_experts: bool = True               # 原策略专家组合；不影响显式opportunity预测
     expert_ic_lookback: int = 12          # 专家质量评估的最近 IC 期数
     neutralize_by_sector: bool = False     # 因子评分前行业/市值中性化(需 meta.sector 真实行业)
     neutralize_by_cap: bool = False        # 市值分位桶去均值(小市值同源暴露剥离)
