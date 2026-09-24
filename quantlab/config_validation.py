@@ -9,12 +9,12 @@ ACTIVE = {
     "data": {"cache_dir", "a_daily_adjust", "reset_cache", "history_years", "rate_limiter_sec"},
     "factors": {"ic_window", "icir_floor", "icir_cap", "momentum_lookback_long", "momentum_skip", "momentum_short",
                 "reversal_window", "vol_window", "turnover_window", "crowding_quantile", "crowding_hot_run", "crowding_hot_ret",
-                "crowding_corr_window", "crowding_corr_alert", "factor_decay_lookback", "use_experts", "expert_ic_lookback"},
+                "crowding_corr_window", "crowding_corr_alert", "factor_decay_lookback", "use_experts", "expert_ic_lookback", "expert_prior_strength", "expert_temperature_floor"},
     "portfolio": {"target_vol", "vol_est_window", "max_sector_weight", "lw_shrinkage"},
     "cost": {"a_slippage", "min_trade_value"},
     "risk": {"stop_loss_single", "drawdown_alert", "drawdown_reduce", "drawdown_exit", "drawdown_halt", "vol_reduction_factor"},
     "research": {"model_version", "horizon", "train_months", "validation_months", "test_months", "max_trials",
-                 "max_stock_weight", "max_etf_weight", "max_etfs", "cash_buffer", "participation", "entry_percentile",
+                 "max_stock_weight", "max_etf_weight", "max_etfs", "max_cluster_weight", "downside_corr", "risk_aversion", "crowding_cost", "liquidity_cost", "cash_buffer", "participation", "entry_percentile",
                  "exit_percentile", "exit_reviews", "recovery_buffer", "recovery_sessions", "forward_months", "universe_mode"},
 }
 
@@ -30,7 +30,7 @@ def config_fields(cfg):
 def status(group, name):
     if group == "" and name in ("seed", "start_date", "benchmark_a"): return "active"
     if name in ACTIVE.get(group, set()): return "active"
-    return "inactive_or_fixed_reject_overrides"
+    return "reserved_reject_overrides"
 
 
 def validate_config(cfg):
@@ -47,4 +47,6 @@ def validate_config(cfg):
     if levels != sorted(set(levels)) or not 0<levels[0]<levels[-1]<1: raise ValueError("invalid_drawdown_levels")
     if cfg.factors.ic_window<24 or cfg.portfolio.vol_est_window<40: raise ValueError("insufficient_estimation_window")
     if cfg.research.recovery_sessions<1 or cfg.research.exit_reviews<1: raise ValueError("invalid_hysteresis")
+    if min(cfg.research.risk_aversion,cfg.research.crowding_cost,cfg.research.liquidity_cost,cfg.factors.expert_prior_strength)<0 or cfg.factors.expert_temperature_floor<=0:
+        raise ValueError('invalid_nonnegative_penalty')
     return True

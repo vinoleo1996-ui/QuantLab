@@ -1,3 +1,5 @@
+> 历史研究笔记，未逐项重新核验。当前机制采用状态及2026增星排名证据以[GITHUB_2026_RANKING_AND_MECHANISMS.md](GITHUB_2026_RANKING_AND_MECHANISMS.md)为准；本文件不能证明策略收益。
+
 # 调研笔记：高星项目吸收 + 2026 前沿论文
 
 本文件记录 QuantLab 在设计与实现过程中吸收的 GitHub 高星项目建筑思想，以及 2026 年以来目标基金/高校/券商研究中的关键结论，作为策略白皮书（STRATEGY.md）的事实依据。

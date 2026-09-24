@@ -54,17 +54,25 @@ def universe_at(dataset, date, amount, cfg):
     return eligible, records
 
 
-def exposure_matrix(dataset, date, records, codes):
-    """Industry look-through plus an explicit unknown ETF group."""
+def exposure_matrix(dataset, date, records, codes, *, as_of=None):
+    """Latest complete exposure snapshot known at the caller's decision time.
+
+    Each available_at group is a replacement snapshot, including revisions of the
+    same effective date. Opening execution must pass its own information cutoff.
+    """
+    cutoff = timestamp(as_of) if as_of is not None else decision_time(date)
     exposures = {}
     known = pd.DataFrame()
     if not dataset.exposures.empty:
         known = dataset.exposures.copy()
-        known = known[known.available_at.map(timestamp) <= decision_time(date)]
-        known = known[pd.to_datetime(known.effective_at).dt.tz_localize(None) <= pd.Timestamp(date)]
+        known['_available'] = known.available_at.map(timestamp)
+        known['_effective'] = known.effective_at.map(timestamp)
+        known = known[(known._available <= cutoff) & (known._effective <= cutoff)]
         if not known.empty:
-            latest = known.groupby("instrument_id").effective_at.transform("max")
-            known = known[known.effective_at == latest]
+            latest = known.groupby("instrument_id")._effective.transform("max")
+            known = known[known._effective == latest]
+            revision = known.groupby("instrument_id")._available.transform("max")
+            known = known[known._available == revision]
     for c in codes:
         r = records.loc[c] if c in records.index else {}
         if r.get("asset_type") == "equity_etf":

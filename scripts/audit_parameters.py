@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Static read-point evidence plus explicit support classification, never a claim of behavioral coverage."""
 import ast
+import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -22,10 +24,18 @@ def reads(files):
 
 
 def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
     files={str(p):p.read_text() for p in Path('quantlab').rglob('*.py')}
+    evidence={}
+    for p in Path('tests').glob('test_*.py'):
+        tree=ast.parse(p.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node,ast.FunctionDef) and node.name.startswith('test_'):
+                for item in ast.walk(node):
+                    if isinstance(item,ast.Attribute):evidence.setdefault(item.attr,set()).add(str(p)+':'+node.name)
     live=reads(files)
     rows=[dict(parameter=f'{g}.{n}'.lstrip('.'), default=str(v), support=status(g,n), read_points=live.get(n,[]),
-               behavioral_coverage='see tests/test_parameters.py; static reads alone do not prove behavior') for g,n,v in config_fields(CONFIG)]
+               behavioral_test_references=sorted(evidence.get(n,[])), behavioral_coverage='mapped_test_requires_assertion_review' if evidence.get(n) else 'not_mapped') for g,n,v in config_fields(CONFIG)]
     before={}
     archive=OUTPUT_DIR/'implementation_20260924'/'source_before.tar.gz'
     if archive.exists():
@@ -38,9 +48,14 @@ def main():
         before=dict(fields=len(names), no_static_or_literal_getattr_reference=len(missing), missing=missing)
     report=dict(original=before, current=rows,
                 caveat='Reference scan is not alias-sensitive data-flow analysis. Unsupported parameter overrides fail explicitly.')
-    out=OUTPUT_DIR/'implementation_20260924'/'parameter_audit.json';out.parent.mkdir(parents=True,exist_ok=True)
+    digest=hashlib.sha256(json.dumps(report,sort_keys=True).encode()).hexdigest()[:12]
+    out=OUTPUT_DIR/'upgrade_20260924'/('parameter_audit_'+digest+'.json');out.parent.mkdir(parents=True,exist_ok=True)
     out.write_text(json.dumps(report,ensure_ascii=False,indent=2))
-    print(out);print('original',before)
+    print(out)
+    missing=[r['parameter'] for r in rows if r['support']=='active' and not r['read_points']]
+    print('active_without_read_points',missing)
+    print('active_behavior_not_mapped',sum(r['support']=='active' and r['behavioral_coverage']=='not_mapped' for r in rows))
+    if args.check and missing:raise SystemExit(1)
 
 
 if __name__=='__main__': main()

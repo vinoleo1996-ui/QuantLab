@@ -65,7 +65,7 @@ def _group_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
 def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
                   pen: pd.DataFrame | None, ic_use: pd.DataFrame,
                   specs: dict[str, list[str] | None] | None = None,
-                  lookback: int | None = None,
+                  lookback: int | None = None, cfg=None,
                   ) -> tuple[pd.DataFrame | None, dict[str, float]]:
     """多专家集成打分。
 
@@ -79,11 +79,12 @@ def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
 
     返回 (综合得分面板, 专家权重 dict)。
     """
-    cfg = CONFIG.factors
+    cfg = cfg or CONFIG.factors
     lookback = lookback or getattr(cfg, "expert_ic_lookback", 12)
     specs = specs or EXPERT_SPECS
     rank_panels: dict[str, pd.DataFrame] = {}
     smoke: dict[str, float] = {}
+    uncertainty = {}
     for name, names in specs.items():
         group = [k for k in (names or list(full.keys())) if k in full]
         ic_grp = [c for c in group if c in ic_use.columns]
@@ -92,7 +93,15 @@ def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
             continue
         ic_row = ic_use[ic_grp].iloc[-lookback:]
         q = float(ic_row.mean(axis=1).mean(skipna=True)) if len(ic_row) else 0.0
-        smoke[name] = q if np.isfinite(q) else 0.0
+        series=ic_row.mean(axis=1).dropna()
+        n=len(series)
+        # Conservative mean uncertainty with positive serial covariance contribution.
+        var=float(series.var(ddof=1)) if n>1 else .25
+        centered=series-series.mean()
+        hac=var+2*sum((1-lag/4)*max(0.,float(centered.autocorr(lag) or 0))*var for lag in range(1,min(4,n-1))) if n>3 and var>0 else var
+        uncertainty[name]=np.sqrt(max(hac,0)/max(n,1))
+        shrink=n/(n+cfg.expert_prior_strength)
+        smoke[name] = q*shrink if np.isfinite(q) else 0.0
         s = _group_score(full, w_row, pen, group)
         if s is None or s.empty:
             rank_panels[name] = None
@@ -108,8 +117,9 @@ def experts_score(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
         w_exp = np.full(len(live), 1.0 / len(live))
     else:
         # 自适应温度：拉开强弱专家权重阶梯，避免 IC 过小时恒等权
-        tau = max(float(np.std(q)), 0.015)
-        w_exp = np.exp(q / tau) / np.exp(q / tau).sum()
+        tau=max(float(np.std(q)),float(np.nanmedian([uncertainty[k] for k in live])),cfg.expert_temperature_floor)
+        logits=(q-q.max())/tau
+        w_exp=np.exp(logits)/np.exp(logits).sum()
 
     all_idx = sorted({d for p in live.values() for d in p.index})
     all_cols = sorted({c for p in live.values() for c in p.columns})
@@ -159,7 +169,7 @@ def expert_mention_reasons(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
 
 def expert_top_union(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
                      pen: pd.DataFrame | None, crowd: pd.Series | None,
-                     top_k: int, specs: dict[str, list[str] | None] | None = None,
+                     top_k: int, specs: dict[str, list[str] | None] | None = None, cfg=None,
                      ) -> dict[str, list[str]]:
     """每个专家独立选出各自 top_k 候选，返回 {专家名: 候选码} 并集视角。
 
@@ -176,7 +186,7 @@ def expert_top_union(full: dict[str, pd.DataFrame], w_row: pd.DataFrame,
         last = s.iloc[-1].dropna()
         if crowd is not None:
             c_row = crowd.reindex(last.index)
-            keep = c_row.rank(pct=True) > (1 - CONFIG.factors.crowding_quantile)
+            keep = c_row.rank(pct=True) > (1 - (cfg or CONFIG.factors).crowding_quantile)
             last = last[keep]
         if last.empty:
             continue

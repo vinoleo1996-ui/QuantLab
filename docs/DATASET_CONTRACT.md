@@ -75,3 +75,34 @@ ETF行业穿透：`instrument_id, effective_at, available_at, sector, weight`。
 - `unverified_data_gaps`：持仓估值或事件存在缺口，不发布绩效。
 - `research_unvalidated`：可计算研究账本，不代表收益优势或实盘批准。
 - 诊断代理数据只能显式进入诊断实验，不能经正式加载器或看板变成实盘建议。
+
+## V3补充：覆盖证明必须匹配实测输入
+
+正式验收要求 `coverage_evidence` 的 `security_history / raw_prices / corporate_actions / calendar / benchmark / opening_rules / industry_history` 各自引用：
+
+```json
+{"source_url":"供应商或独立核验规范URL","verification_artifact":"coverage/raw_prices.json","sha256":"文件哈希"}
+```
+
+引用文件是JSON，至少含 `kind=data_coverage`、对应`field`、`status=passed`、`input_fingerprint`、`method_version`、`source_urls`、`coverage`、`measurements`。
+
+- `input_fingerprint`由`coverage_input_fingerprint(dataset)`计算，绑定实际表格，不循环包含manifest。
+- `coverage.start/end`覆盖数据日历起点至as_of，`coverage.instruments`匹配全体证券。
+- `measurements.expected_observations/actual_observations`来自独立覆盖核验且相等，不小于输入对应表计数；`unresolved_required_gaps=0`。空表公司行动必须有检查过程，不代表默认无事件。
+- 校验代码会核对文件路径、哈希、输入身份、区间、证券范围及测量值。签名和授权仍须由供应商/研究者提供；文件形式合格不代替真实调查。
+
+`source/revision`是数据来源版本；`fetched_at`是抓取时间。三者都不能替代历史available_at。
+
+### 股息税与复杂事件
+
+现金公司行动须显式声明 `tax_policy`：`gross_cn_individual`为税前现金与个人持有期税；`net_fixed`仅限已有可证明的固定净额口径；`exempt_etf`须有免税资格依据。不能把供应商统一税后字段冒充本账户持有期税率。
+
+非distribution、零碎股现金替代、配股、合并/退市结算等未完整支持。遇到未支持事件，标记不可验证或阻断，不以空事件表通过。
+
+### ETF穿透版本
+
+每个`instrument_id/effective_at/available_at`组是一份完整权重快照。同一effective_at的新available_at整体替换旧快照。开盘检查只读取09:25已知穿透，收盘研究使用18:00已知穿透；不能用下午公告修改上午成交。
+
+### 新产物与恢复
+
+新run目录带 `artifacts.json` 文件摘要，原子发布；同run_id不同账本内容拒绝覆盖。pickle仅用于本地产物，不导入不可信外部文件。恢复的前向交易日标记 `recovered_session=true`，不计作当时实时产生的冻结验证材料。

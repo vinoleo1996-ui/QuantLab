@@ -1,7 +1,7 @@
 """Cash/share ledger. Orders are intents; only fills change cash or holdings."""
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from decimal import Decimal, ROUND_HALF_UP
 import math
 
@@ -21,6 +21,8 @@ class Lot:
     available_session: int
     cost: float
     acquired_session: int
+    acquired_date: str = ""
+    dividends: list = field(default_factory=list)
 
 
 @dataclass
@@ -36,6 +38,17 @@ class Order:
     reject_reason: str = ""
 
 
+def price_bounds(bar,rule):
+    upper,lower=bar.get('limit_up',np.nan),bar.get('limit_down',np.nan)
+    if rule.limit_ratio is not None and np.isfinite(rule.limit_ratio) and not (np.isfinite(upper) and np.isfinite(lower)):
+        ref=bar.get('reference_price',np.nan)
+        if np.isfinite(ref) and ref>0:
+            def tick(value):return float((value/Decimal(str(rule.price_tick))).quantize(Decimal('1'),rounding=ROUND_HALF_UP))*rule.price_tick
+            upper=tick(Decimal(str(ref))*(1+Decimal(str(rule.limit_ratio))))
+            lower=tick(Decimal(str(ref))*(1-Decimal(str(rule.limit_ratio))))
+    return upper,lower
+
+
 def trade_permission(bar, rule: InstrumentRules, side, date):
     if bar is None: return False, "missing_open"
     px = bar.get("open", np.nan)
@@ -45,15 +58,9 @@ def trade_permission(bar, rule: InstrumentRules, side, date):
     when = bar.get("open_status_available_at")
     if when is None or pd.isna(when) or timestamp(when) > timestamp(date) + pd.Timedelta(hours=9, minutes=30):
         return False, "opening_status_not_available"
-    upper, lower = bar.get("limit_up", np.nan), bar.get("limit_down", np.nan)
+    upper, lower = price_bounds(bar,rule)
     if rule.limit_ratio is not None and np.isfinite(rule.limit_ratio):
-        ref = bar.get("reference_price", np.nan)
-        if not (np.isfinite(upper) and np.isfinite(lower)):
-            if not np.isfinite(ref) or ref <= 0: return False, "missing_limit_reference"
-            upper = float((Decimal(str(ref)) * (1 + Decimal(str(rule.limit_ratio))) /
-                           Decimal(str(rule.price_tick))).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) * rule.price_tick
-            lower = float((Decimal(str(ref)) * (1 - Decimal(str(rule.limit_ratio))) /
-                           Decimal(str(rule.price_tick))).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) * rule.price_tick
+        if not (np.isfinite(upper) and np.isfinite(lower)):return False,'missing_limit_reference'
         if side == "buy" and px >= upper - rule.price_tick / 2: return False, "limit_up"
         if side == "sell" and px <= lower + rule.price_tick / 2: return False, "limit_down"
     return True, ""
@@ -74,6 +81,7 @@ class Ledger:
         self.receivables: list[dict] = []
         self.entitlements: dict[str, dict[str, int]] = {}
         self.applied_actions: set[str] = set()
+        self.entitlement_lots = {}
         self.snapshots: list[dict] = []
         self.data_issues: list[dict] = []
 
@@ -108,10 +116,27 @@ class Ledger:
             raise AssertionError("cash/share conservation violated")
         state = {"date": pd.Timestamp(date), "session": session, "nav": self.nav(), "cash": self.cash,
                  "receivables": sum(x["amount"] for x in self.receivables), "quantities": self.quantities(),
-                 "weights": self.weights(), "stale": stale}
+                 "weights": self.weights(), "stale": stale,
+                 "marks": {c:self.marks[c] for c in self.quantities()},
+                 "cost_basis": {c:self.cost_basis(c) for c in self.quantities()},
+                 "entry_dates": {c:min(l.acquired_date for l in self.lots[c] if l.quantity and l.acquired_date)
+                                 for c in self.quantities() if any(l.quantity and l.acquired_date for l in self.lots[c])}}
         self.snapshots.append(state)
         self.entitlements[str(pd.Timestamp(date).date())] = self.quantities().copy()
+        self.entitlement_lots[str(pd.Timestamp(date).date())]={c:[(lot,lot.quantity) for lot in self.lots[c] if lot.quantity] for c in self.quantities()}
         return state
+
+    def dividend_tax(self,c,quantity,session,date):
+        from quantlab.backtest.tax import dividend_tax_rate
+        total=0.;left=quantity
+        for lot in self.lots.get(c,[]):
+            if lot.available_session>session:continue
+            take=min(left,lot.quantity);left-=take
+            for claim in lot.dividends:
+                if not lot.acquired_date:raise ValueError('dividend_tax_acquisition_date_unknown')
+                total+=take*claim['per_share']*dividend_tax_rate(lot.acquired_date,date,claim['ex_date'])
+            if not left:break
+        return money(total)
 
     def corporate_actions(self, date, session, actions, calendar):
         d = pd.Timestamp(date).normalize()
@@ -127,20 +152,38 @@ class Ledger:
                     self.data_issues.append({"date": str(d), "reason": "late_corporate_action", "instrument": a.instrument_id})
                     continue
                 c = a.instrument_id
+                if a.get('action_type','distribution')!='distribution':
+                    self.data_issues.append(dict(date=str(d),reason='unsupported_corporate_action',action=a.action_id));continue
+                policy=a.get('tax_policy','net_fixed')
+                if policy not in ('net_fixed','gross_cn_individual','exempt_etf'):
+                    self.data_issues.append(dict(date=str(d),reason='unknown_dividend_tax_policy'));continue
                 q = self.entitlements.get(str(pd.Timestamp(a.record_date).date()), {}).get(c, 0)
                 cash = money(q * float(a.cash_per_share))
                 ratio = float(a.share_ratio)
                 extra = q * ratio
-                if abs(extra - round(extra)) > 1e-8:
-                    raise ValueError("fractional action shares require explicit cash-in-lieu action")
+                entitlement_lots=self.entitlement_lots.get(str(pd.Timestamp(a.record_date).date()),{}).get(c,[])
+                if abs(extra-round(extra))>1e-8 or any(abs(entitled*ratio-round(entitled*ratio))>1e-8 for lot,entitled in entitlement_lots):
+                    self.data_issues.append(dict(date=str(d),reason='fractional_action_requires_explicit_settlement',action=a.action_id))
+                    continue
                 if cash:
                     self.receivables.append({"amount": cash, "pay_date": str(a.pay_date), "action_id": a.action_id})
+                if policy=='gross_cn_individual' and cash:
+                    for lot,entitled in self.entitlement_lots.get(str(pd.Timestamp(a.record_date).date()),{}).get(c,[]):
+                        if not lot.acquired_date:
+                            self.data_issues.append(dict(date=str(d),reason='dividend_tax_acquisition_date_unknown'))
+                            continue
+                        if lot.quantity!=entitled:self.data_issues.append(dict(date=str(d),reason='changed_entitlement_lot_requires_tax_reconciliation'))
+                        lot.dividends.append(dict(per_share=float(a.cash_per_share),ex_date=str(a.ex_date),action_id=a.action_id))
                 if extra:
                     ix = calendar.searchsorted(pd.Timestamp(a.share_date))
-                    basis = self.cost_basis(c)
-                    # Preserve total cost across bonus shares.
-                    for lot in self.lots.get(c, []): lot.cost /= 1 + ratio
-                    self.lots.setdefault(c, []).append(Lot(int(round(extra)), int(ix), basis / (1 + ratio), session))
+                    # Bonus lots inherit acquisition dates and proportionally split tax claims.
+                    for lot,entitled in self.entitlement_lots.get(str(pd.Timestamp(a.record_date).date()),{}).get(c,[]):
+                        shares=entitled*ratio
+                        if abs(shares-round(shares))>1e-8:raise ValueError('fractional_lot_action_requires_settlement')
+                        lot.cost/=1+ratio
+                        for claim in lot.dividends:claim['per_share']/=1+ratio
+                        self.lots[c].append(Lot(int(round(shares)),int(ix),lot.cost,lot.acquired_session,
+                                                lot.acquired_date,[dict(x) for x in lot.dividends]))
                 if c in self.marks:
                     self.marks[c] = (self.marks[c] - float(a.cash_per_share)) / (1 + ratio)
                 self.applied_actions.add(a.action_id)
@@ -177,6 +220,9 @@ class Ledger:
             if qty and (side == "sell" and (target == 0 or reason == "risk_exit") or qty * self.marks[c] >= self.min_trade_value):
                 self.orders.append(Order(f"O{len(self.orders)+1:08d}", c, side, qty, qty,
                                          str(pd.Timestamp(signal_date).date()), reason))
+            elif qty:
+                self.events.append(dict(date=str(pd.Timestamp(signal_date).date()),type='order_not_submitted',
+                    instrument_id=c,side=side,quantity=qty,reason='below_min_trade_value',target_quantity=target))
 
     def fee(self, date, rule, side, notional):
         commission = max(rule.min_commission, notional * rule.commission) * self.cost_mult
@@ -206,13 +252,18 @@ class Ledger:
                 continue
             px0 = float(bars[c]["open"])
             px = px0 * (1 + self.slippage * self.cost_mult * (1 if side == "buy" else -1))
-            px = round(px / rule.price_tick) * rule.price_tick
-            upper, lower = bars[c].get("limit_up", np.inf), bars[c].get("limit_down", -np.inf)
+            px = float((Decimal(str(px))/Decimal(str(rule.price_tick))).quantize(Decimal("1"),rounding=ROUND_HALF_UP))*rule.price_tick
+            upper, lower = price_bounds(bars[c],rule)
+            if (side=='buy' and np.isfinite(upper) and px>=upper-rule.price_tick/2) or (side=='sell' and np.isfinite(lower) and px<=lower+rule.price_tick/2):
+                o.reject_reason='slippage_reaches_price_limit'
+                if side=='buy':o.status='expired'
+                continue
             if np.isfinite(upper): px = min(px, upper)
             if np.isfinite(lower): px = max(px, lower)
             if px <= 0: raise ValueError("invalid slipped price")
             lot = int(rule.buy_lot if side == "buy" else rule.sell_lot)
-            qty = min(o.remaining, int(a * self.participation / px))
+            used=sum(f["notional"] for f in self.fills if f["instrument_id"]==c and f["date"]==str(pd.Timestamp(date).date()))
+            qty = min(o.remaining, int(max(0.,a * self.participation-used) / px))
             if side == "sell": qty = min(qty, self.available(c, session))
             # Odd lots may only be sold as the entire remaining position.
             if side == "buy" or qty < self.quantity(c): qty = qty // lot * lot
@@ -230,10 +281,13 @@ class Ledger:
                 continue
             notional = money(qty * px)
             commission, stamp = self.fee(date, rule, side, notional)
-            fees = money(commission + stamp)
+            dividend_tax = self.dividend_tax(c,qty,session,date) if side=="sell" else 0.
+            fees = money(commission + stamp + dividend_tax)
+            if side=="sell" and self.cash+notional-fees<0:
+                o.reject_reason="insufficient_cash_for_tax";continue
             if side == "buy":
                 self.cash = money(self.cash - notional - fees)
-                self.lots.setdefault(c, []).append(Lot(qty, session + int(rule.sell_delay), (notional + fees) / qty, session))
+                self.lots.setdefault(c, []).append(Lot(qty, session + int(rule.sell_delay), (notional + fees) / qty, session, str(pd.Timestamp(date).date())))
             else:
                 self.cash = money(self.cash + notional - fees)
                 left = qty
@@ -248,7 +302,7 @@ class Ledger:
             o.status, o.reject_reason = ("filled" if o.remaining == 0 else "partial"), ""
             self.fills.append({"order_id": o.order_id, "instrument_id": c, "side": side, "date": str(pd.Timestamp(date).date()),
                                "quantity": qty, "price": px, "notional": notional, "commission": commission,
-                               "stamp_tax": stamp, "fees": fees, "slippage_cost": money(abs(px-px0)*qty),
+                               "stamp_tax": stamp, "dividend_tax": dividend_tax, "fees": fees, "slippage_cost": money(abs(px-px0)*qty),
                                "signal_date": o.signal_date, "reason": o.reason, "cash_after": self.cash})
             if side == "buy" and o.remaining: o.status, o.reject_reason = "expired", "partial_day_order"
         if self.cash < -0.005: raise AssertionError("negative cash")

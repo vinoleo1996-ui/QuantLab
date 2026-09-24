@@ -39,7 +39,7 @@ def main(argv=None):
                              error=frame.attrs.get('update_error') if frame is not None else 'no_data'))
         except Exception as e:rows.append(dict(instrument_id=c,advanced=False,current=False,error=str(e)))
     report=dict(recorded_at=pd.Timestamp.now(tz='UTC').isoformat(),expected_session=args.expected_session,
-                status='public_cache_only',stocks_advanced=sum(x['advanced'] for x in rows),
+                status='public_cache_only' if rows and all(x['current'] and not x.get('error') for x in rows) else 'public_cache_incomplete',stocks_advanced=sum(x['advanced'] for x in rows),
                 stocks_current=sum(x['current'] for x in rows),rows=rows,promotion_approved=False)
     out=OUTPUT_DIR/'pulse_v2.json';out.write_text(json.dumps(report,ensure_ascii=False,indent=2));print(out)
 

@@ -1,13 +1,4 @@
-"""A股数据后端：新浪向候选池 + 腾讯前复权日线（requests 直连）。
-
-背景：东财接口(WAF)在本网络下按客户端/出口风控，requests 与 curl_cffi 均
-可能被 RemoteDisconnected；而新浪快照与腾讯 K 线接口稳定可直连。此模块作为
-akshare/东财之后的 fallback 数据后端。
-
-接口：
-  fetch_spot_candidates() -> DataFrame | None （全A实时快照, 微博HS_a分页）
-  fetch_kline(code, start, end) -> DataFrame | None （前复权日线, 腾讯fqkline）
-"""
+"""Public Sina candidate snapshots and Tencent K-lines. These are unverified public feeds; successful requests do not establish historical membership, opening tradability or PIT availability."""
 
 from __future__ import annotations
 
@@ -43,9 +34,8 @@ def fetch_spot_candidates() -> pd.DataFrame | None:
             }, headers=_HDR, timeout=_TIMEOUT)
             r.raise_for_status()
             part = r.json()
-        except Exception:
-            time.sleep(1.0)
-            continue
+        except Exception as exc:
+            raise RuntimeError(f'sina_candidate_page_failed:{page}; incomplete snapshot rejected') from exc
         if not part:
             break
         rows.extend(part)

@@ -32,7 +32,7 @@ class Capital:
     a_share_ratio: float = 1.00           # A股资金占比
     us_ratio: float = 0.00                # 美股资金占比
     usd_cny: float = 7.20                 # 汇率(仅用于换算展示)
-    target_positions: int = 25            # 总持仓只数目标
+    target_positions: int = 23            # 总持仓只数目标
     a_share_positions: int = 20           # A股持仓只数
     us_positions: int = 5                 # 美股持仓只数
     rebalance_rule: str = "weekly"       # 调仓频率: monthly | every_n_weeks
@@ -91,6 +91,8 @@ class FactorConfig:
     crowding_corr_window: int = 60        # 因子收益两两相关监控窗口(调仓期)
     crowding_corr_alert: float = 0.25     # 因子相关拥挤预警阈值
     factor_decay_lookback: int = 24       # 因子失效判定窗口(IC 期数)
+    expert_prior_strength: float = 12.0
+    expert_temperature_floor: float = 0.05
     use_experts: bool = False              # 多专家集成打分(动量/价值/低波/流动/综合, 专家级IC加权)
     expert_ic_lookback: int = 12          # 专家质量评估的最近 IC 期数
     neutralize_by_sector: bool = False     # 因子评分前行业/市值中性化(需 meta.sector 真实行业)
@@ -136,10 +138,10 @@ class Cost:
 class RiskConfig:
     stop_loss_single: float = -0.16       # L1 单票止损线(相对成本)
     drawdown_alert: float = 0.10          # L2 组合回撤>10% -> 目标波动降档
-    drawdown_reduce: float = 0.15         # L3 组合回撤>15% -> 仓位×0.7
+    drawdown_reduce: float = 0.15         # 组合回撤15% -> 风险仓位上限60%
     drawdown_exit: float = 0.18            # 风险仓位上限30%
-    drawdown_halt: float = 0.20           # L4 组合回撤>20% -> ≤30% 仓位
-    compound_down: float = 0.30           # 组合回撤>20%且市场状态弱 -> 极端降仓
+    drawdown_halt: float = 0.20           # 回撤20%：退出并人工复核
+    compound_down: float = 0.30           # RESERVED：旧Regime参数，新每日风控不读取
     vol_reduction_factor: float = 0.75    # L2 目标波动缩放
     regime_window: int = 20               # 市场状态均线窗口
     regime_vol_quantile: float = 0.80     # 波动率高位分位(用于状态判断)

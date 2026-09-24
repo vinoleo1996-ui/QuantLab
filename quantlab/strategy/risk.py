@@ -1,10 +1,6 @@
-"""风控：市场状态识别 + 组合回撤分级降杠杆 + 单票止损。
-
-规则与白皮书一致(L1~L4)：
-- L2 组合回撤 >10% -> 目标波动率缩放(×0.75)
-- L3 组合回撤 >15% -> 总仓位 ×0.7
-- L4 组合回撤 >22% -> 仓位 ≤30%
-- 深熊(趋势向下 + 高波动) -> 极端降仓
+"""Daily drawdown controls: 10/15/18/20 percent, five-session recovery hysteresis.
+Regime is an attributed diagnostic only under this policy; frozen legacy control
+retains the old regime rule for explicit comparisons. No automatic human resume.
 """
 
 from __future__ import annotations
@@ -23,7 +19,7 @@ class Regime:
         self.bench = bench_close.sort_index()
         self.ma20 = self.bench.rolling(20).mean()
         self.ma60 = self.bench.rolling(60).mean()
-        ret = self.bench.pct_change()
+        ret = self.bench.pct_change(fill_method=None)
         self.vol = ret.rolling(120).std() * np.sqrt(252)
 
     def _thresh(self, date: pd.Timestamp) -> float:
@@ -53,9 +49,10 @@ class Regime:
 
 class RiskManager:
     """Daily close risk state. Hysteresis is counted in exchange sessions, not calls."""
-    def __init__(self, cfg=None, research_cfg=None):
+    def __init__(self, cfg=None, research_cfg=None, target_vol=None):
         self.cfg = cfg or CONFIG.risk
         self.research_cfg = research_cfg or CONFIG.research
+        self.target_vol = CONFIG.portfolio.target_vol if target_vol is None else target_vol
         self.peak = None
         self.dd = self.max_dd = 0.0
         self.level = 0
@@ -67,12 +64,10 @@ class RiskManager:
     def approve_resume(self, *, approved_by: str):
         if not approved_by.strip():
             raise ValueError("named human approval required")
-        # Preserve lifetime peak and drawdown. A new mandate needs a new risk episode.
+        # Approval unlocks recovery; it cannot erase losses or reset the control peak.
         self.manual_review = False
         self.level = 3
         self.recovery_count = 0
-        self.resume_anchor = self.peak
-        self.episode_peak = None
         self.resume_approval = approved_by
 
     def evaluate(self, portfolio_value: float, regime_mult: float = 1.0, date=None):
@@ -84,12 +79,7 @@ class RiskManager:
         self.peak = max(self.peak or portfolio_value, portfolio_value)
         self.dd = portfolio_value / self.peak - 1
         self.max_dd = min(self.max_dd, self.dd)
-        # Explicit human resumption opens a new control episode, never resets reported DD.
-        if hasattr(self, "resume_approval"):
-            self.episode_peak = max(self.episode_peak or portfolio_value, portfolio_value)
-            control_dd = portfolio_value / self.episode_peak - 1
-        else:
-            control_dd = self.dd
+        control_dd = self.dd
         thresholds = (self.cfg.drawdown_alert, self.cfg.drawdown_reduce, self.cfg.drawdown_exit, self.cfg.drawdown_halt)
         desired = sum(-control_dd >= x - 1e-12 for x in thresholds)
         if desired > self.level:
@@ -110,7 +100,7 @@ class RiskManager:
         reasons = [f"drawdown_level_{self.level}"] if self.level else []
         return {"portfolio_value": portfolio_value, "drawdown": self.dd, "max_drawdown": self.max_dd,
                 "control_drawdown": control_dd, "level": self.level, "vol_scale": self.vol_scale,
-                "gross_scale": self.gross_scale, "target_vol": CONFIG.portfolio.target_vol * self.vol_scale,
+                "gross_scale": self.gross_scale, "target_vol": self.target_vol * self.vol_scale,
                 "manual_review": self.manual_review, "allow_new_stock": self.level < 3,
                 "recovery_count": self.recovery_count, "reasons": reasons}
 

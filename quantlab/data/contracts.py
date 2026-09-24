@@ -91,6 +91,7 @@ class MarketDataset:
     announcements: pd.DataFrame = field(default_factory=pd.DataFrame)
     exposures: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
+    evidence_root: Path | None = field(default=None, repr=False)
 
     @property
     def version(self):
@@ -134,6 +135,11 @@ class MarketDataset:
                 errors.append("invalid_action_record_date")
             elif (self.actions.cash_per_share < 0).any() or (self.actions.share_ratio < 0).any():
                 errors.append("unsupported_action")
+        if not self.actions.empty and 'cash_per_share' in self.actions:
+            cash_actions=self.actions[self.actions.cash_per_share>0]
+            if len(cash_actions) and ('tax_policy' not in cash_actions or not cash_actions.tax_policy.isin(['net_fixed','gross_cn_individual','exempt_etf']).all()):
+                errors.append('dividend_tax_policy_unverified')
+            if 'action_type' in self.actions and not self.actions.action_type.eq('distribution').all():errors.append('unsupported_corporate_action')
         if self.benchmark.empty or self.manifest.get("benchmark_type") not in ("index", "equity_etf"):
             errors.append("benchmark_identity_unverified")
         elif not {"available_at", "source", "revision", "quality_status", "close"}.issubset(self.benchmark):
@@ -176,4 +182,5 @@ def load_dataset(path: str | Path) -> MarketDataset:
                             read(m["exposures"]) if m.get("exposures") else pd.DataFrame(), m)
     errors = dataset.validate()
     if errors: raise DataContractError("; ".join(errors))
+    dataset.evidence_root = root
     return dataset

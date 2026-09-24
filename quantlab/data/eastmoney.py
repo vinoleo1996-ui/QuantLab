@@ -1,15 +1,4 @@
-"""东方财富直连后端（基于 curl_cffi，规避 requests 被 WAF 指纹封锁）。
-
-为什么需要它：
-- 部分网络下 akshare 依赖的 requests/urllib3 TLS 指纹(JA3)被东财 WAF 直接断开
-  (RemoteDisconnected)；而 curl_cffi impersonate=chrome 携带浏览器指纹可通过。
-- 本模块提供 候选池(全A实时快照) 与 历史K线(前复权) 两条东财接口的 curl_cffi 直连，
-  作为 akshare 的 fallback；两者都失败再由上层回退合成数据。
-
-接口：
-  fetch_spot_candidates() -> DataFrame
-  fetch_kline(code)       -> DataFrame(datetime/open/close/high/low/...)
-"""
+"""Public Eastmoney adapter using curl_cffi. Network compatibility depends on the deployment environment; no backend guarantees WAF access. Raw and adjusted prices must use separate cache keys. Failure is reported; no synthetic data fallback."""
 
 from __future__ import annotations
 

@@ -1,15 +1,4 @@
-"""QuantLab CLI：数据、回测、信号、实时行情、专家监控、Web 看板。
-
-用法：
-  python -m quantlab.cli fetch    --source akshare  # 拉取数据
-  python -m quantlab.cli backtest --source auto     # 回测 + HTML报告
-  python -m quantlab.cli signals  --source auto     # 输出本期买卖建议
-  python -m quantlab.cli quote    [--symbols 600519,000001]  # 实时行情(缺省=当前持仓)
-  python -m quantlab.cli monitor  --limit 100          # 每日专家监控意见
-  python -m quantlab.cli web      --port 8899          # 四合一看板
---source: auto(默认,真实数据优先) | akshare | yfinance
-说明: 已移除离线合成数据链路——所有真实后端失败时直接报错，拒绝人造回退。
-"""
+"""QuantLab versioned research, data audit, shared signals, forward paper accounts and public-cache utilities. --source applies to public fetching; research uses --manifest exclusively."""
 
 from __future__ import annotations
 
@@ -38,7 +27,7 @@ def build_panels(source: str, market: str, limit: int | None = None):
     return panels, cand, feed.fetch_benchmark(market)
 
 
-def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="repaired_legacy"):
+def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="repaired_legacy", forecasts=None):
     from quantlab.backtest.engine import Engine, blocked_result
     from quantlab.data.contracts import load_dataset, DataContractError
     from quantlab.report.runs import persist_run, finalize_run_identity
@@ -46,7 +35,16 @@ def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="
     if not path.exists():
         result = blocked_result(["dataset_manifest_missing", str(path), "legacy_caches_are_not_PIT_raw_execution_data"])
     else:
-        try: result = Engine(market=market).run(load_dataset(path), strategy=strategy)
+        try:
+            from quantlab.data.qualification import audit_manifest
+            assessment=audit_manifest(path)
+            if assessment['status']!='qualified_for_daily_research':result=blocked_result(assessment['reasons'])
+            else:
+                ds=load_dataset(path)
+                if isinstance(forecasts,(str,Path)):
+                    from quantlab.strategy.opportunity import load_forecasts
+                    forecasts=load_forecasts(forecasts,ds.version)
+                result=Engine(market=market).run(ds,strategy=strategy,forecasts=forecasts)
         except (DataContractError, KeyError, ValueError) as exc: result = blocked_result([str(exc)])
     finalize_run_identity(result)
     if save:
@@ -65,7 +63,7 @@ def cmd_fetch(args):
 def cmd_backtest(args):
     from quantlab.report.html import build_html_report
     result = run_backtest(args.source, args.market, manifest=getattr(args, "manifest", None),
-                          strategy=getattr(args, "strategy", "repaired_legacy"))
+                          strategy=getattr(args, "strategy", "repaired_legacy"), forecasts=getattr(args,"forecasts",None))
     folder = Path(result["artifact_directory"])
     report = build_html_report(result, title="QuantLab 研究验证报告", out=folder / "report.html")
     _print_perf(result)
@@ -74,8 +72,9 @@ def cmd_backtest(args):
 
 def _print_perf(result):
     from quantlab.report.metrics import performance_table
+    print("[run_health]", result.get("run_health", {}))
     print("[status]", result.get("status", "legacy_unvalidated"), result.get("reasons", []))
-    if result.get("status") in ("blocked_data", "unverified_data_gaps"):
+    if result.get("status") in ("blocked_data", "unverified_data_gaps") or (result.get("run_health") and not result["run_health"]["research_interpretable"]):
         print("[performance] 未验证，绩效指标不发布")
         return
     print("[research metrics; no live return claim]", performance_table(result["nav"], result["daily_return"]))
@@ -90,23 +89,27 @@ def signal_payload(result):
         return dict(meta, signal_date=None, exec_date=None, trades=[], orders=[])
     trades = result.get("trades", [])
     latest = trades[-1] if trades else {}
-    prior = result.get("account", [{}])[-1].get("weights", {})
+    state = result.get("account", [{}])[-1]
+    prior = state.get("weights", {})
     pending = [o for o in result.get("orders", []) if o["status"] in ("pending", "partial")]
     if not pending:
         return dict(meta, signal_date=latest.get("signal_date"), exec_date=None, trades=[], orders=[], note="没有待执行订单")
-    target = latest.get("weights", {})
-    rows = [(c, target.get(c, 0.), prior.get(c, 0.),
-             "清仓" if target.get(c, 0.)==0 else "买入" if target.get(c, 0.)>prior.get(c, 0.) else "减仓" if target.get(c, 0.)<prior.get(c, 0.) else "持有")
-            for c in sorted(set(target)|set(prior))]
+    rows=[]
+    for o in pending:
+        c=o['instrument_id'];qty=state.get('quantities',{}).get(c,0)
+        delta=o['remaining']*(1 if o['side']=='buy' else -1)
+        target_qty=max(0,qty+delta)
+        target_weight=prior.get(c,0)*target_qty/qty if qty else latest.get('weights',{}).get(c,0.)
+        rows.append((c,target_weight,prior.get(c,0.),'买入' if delta>0 else '清仓' if target_qty==0 else '减仓'))
     return dict(meta, signal_date=latest.get("signal_date"), exec_date=latest.get("exec_date"), trades=rows,
-                orders=[o for o in result.get("orders", []) if o["status"] in ("pending", "partial")],
-                note="研究模拟账户；实际持仓和成交须另行录入核对。")
+                orders=pending,
+                note="方向与数量来自待执行订单；权重仅为估计。逐单信号日及未成交原因见orders。研究模拟账户，须另行核对实际成交。")
 
 
 def cmd_signals(args):
     import json
     from quantlab.report.runs import persist_run
-    result = run_backtest(args.source, args.market, save=False, manifest=getattr(args, "manifest", None))
+    result = run_backtest(args.source, args.market, save=False, manifest=getattr(args, "manifest", None), strategy=args.strategy, forecasts=args.forecasts)
     folder = persist_run(result)
     payload = signal_payload(result)
     out = folder / "signals.json"
@@ -137,13 +140,61 @@ def cmd_quote(args) -> None:
 def cmd_monitor(args):
     import json
     from quantlab.strategy.monitor import daily_expert_pulse
-    result = daily_expert_pulse(args.limit, manifest=getattr(args, "manifest", None))
+    result = daily_expert_pulse(args.limit, manifest=getattr(args, "manifest", None), strategy=args.strategy, forecasts=args.forecasts)
     print(json.dumps(result, ensure_ascii=False, default=str, indent=2))
 
 
 def cmd_web(args) -> None:
     from quantlab.webapp.app import main as web_main
     web_main(args.port)
+
+
+def cmd_research(args):
+    import json
+    from quantlab.data.qualification import audit_manifest
+    from quantlab.data.contracts import load_dataset
+    from quantlab.pipeline import run_suite,DEFAULT_PROTOCOL
+    report=audit_manifest(args.manifest)
+    if report['status']!='qualified_for_daily_research':
+        folder=Path(args.output);folder.mkdir(parents=True,exist_ok=True)
+        from quantlab.data.contracts import fingerprint
+        (folder/('blocked_'+fingerprint(report)[:12]+'.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2))
+        print(json.dumps(report,ensure_ascii=False,indent=2));return
+    protocol=json.loads(Path(args.protocol).read_text()) if args.protocol else DEFAULT_PROTOCOL
+    print(json.dumps(run_suite(load_dataset(args.manifest),args.output,protocol),ensure_ascii=False,indent=2,default=str))
+
+
+def cmd_forward(args):
+    import json
+    from quantlab.forward import ForwardBook
+    from quantlab.data.contracts import load_dataset
+    from quantlab.strategy.opportunity import Forecast
+    book=ForwardBook(args.book,args.model_version)
+    if args.cmd=='forward-status':result=book.status()
+    elif args.cmd=='forward-reconcile':
+        if not args.fills:raise ValueError('--fills required')
+        result=book.reconcile(json.loads(Path(args.fills).read_text()))
+    else:
+        from quantlab.data.qualification import audit_manifest
+        assessment=audit_manifest(args.manifest)
+        if assessment['status']!='qualified_for_daily_research':print(json.dumps(assessment,ensure_ascii=False));return
+        ds=load_dataset(args.manifest)
+        if args.cmd=='forward-recover':
+            from quantlab.strategy.opportunity import load_forecasts
+            result=book.recover(ds,load_forecasts(args.forecasts,ds.version) if args.forecasts else {})
+            print(json.dumps(result,ensure_ascii=False,default=str,indent=2));return
+        f=None
+        if args.model:
+            from quantlab.strategy.opportunity import load_model,opportunity_features,normalized_features
+            from quantlab.data.market import panels_for_research,universe_at
+            model=load_model(args.model);d=pd.Timestamp(ds.manifest['as_of']).normalize()
+            _,amount,_=panels_for_research(ds);eligible,_=universe_at(ds,d,amount,CONFIG)
+            f=model.predict(normalized_features(opportunity_features(ds)),d,eligible)
+        if args.forecast:
+            row=json.loads(Path(args.forecast).read_text());row['expected_returns']=pd.Series(row['expected_returns'])
+            f=Forecast(**row)
+        result=book.step(ds,f)
+    print(json.dumps(result,ensure_ascii=False,default=str,indent=2))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -158,9 +209,30 @@ def main(argv: list[str] | None = None) -> None:
         sp.add_argument("--symbols", default="")
         sp.add_argument("--limit", type=int, default=25)
         sp.add_argument("--manifest", default=None, help="经过哈希校验的研究数据集清单")
-        sp.add_argument("--strategy", default="repaired_legacy", choices=["repaired_legacy", "buy_hold", "monthly_equal", "vol_matched_equal"])
+        sp.add_argument("--strategy", default="repaired_legacy", choices=["repaired_legacy", "buy_hold", "monthly_equal", "vol_matched_equal", "opportunity"])
+        sp.add_argument("--forecasts",default=None,help="研究流水线冻结的预测文件")
         sp.add_argument("--reset-cache", action="store_true", help="强制重拉全部历史(绕过本地缓存)")
+    audit=sub.add_parser('data-audit');audit.add_argument('--manifest',default='data/research/manifest.json')
+    evidence=sub.add_parser('evidence-audit');evidence.add_argument('--bundle',required=True)
+    research=sub.add_parser('research');research.add_argument('--manifest',default='data/research/manifest.json')
+    research.add_argument('--protocol');research.add_argument('--output',default='output/research_v3')
+    for name in ('forward-step','forward-status','forward-reconcile','forward-recover'):
+        fp=sub.add_parser(name);fp.add_argument('--book',required=True);fp.add_argument('--model-version',required=True)
+        fp.add_argument('--manifest',default='data/research/manifest.json');fp.add_argument('--forecast');fp.add_argument('--fills');fp.add_argument('--model');fp.add_argument('--forecasts')
     args = p.parse_args(argv)
+    if args.cmd=='evidence-audit':
+        import json
+        from quantlab.evidence import verify_bundle
+        path=Path(args.bundle)
+        print(json.dumps(verify_bundle(json.loads(path.read_text()),path.parent),ensure_ascii=False,indent=2,default=str));return
+    if args.cmd=='data-audit':
+        import json
+        from quantlab.data.qualification import audit_manifest
+        print(json.dumps(audit_manifest(args.manifest),ensure_ascii=False,indent=2));return
+    if args.cmd=='research':
+        cmd_research(args);return
+    if args.cmd.startswith('forward-'):
+        cmd_forward(args);return
     if getattr(args, "reset_cache", False):
         CONFIG.data.reset_cache = True
     cmds = {"fetch": cmd_fetch, "backtest": cmd_backtest, "signals": cmd_signals,

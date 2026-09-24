@@ -230,11 +230,15 @@ class DataFeed:
             df["revision"] = pd.Timestamp.now(tz="UTC").isoformat()
             df["available_at"] = df["revision"]  # observed now, never invented historical availability
             df["quality_status"] = "unverified_public_feed"
+            df['open_status']='unknown'
+            df['open_status_available_at']=pd.NaT
             try:
                 self.store.save(df, "a", key)
                 df = self.store.load("a", key)
             except ValueError as exc:
                 if cached is None: raise
+                import warnings
+                warnings.warn('Cache update rejected; preserved previous version: '+str(exc),RuntimeWarning)
                 df = cached.copy()
                 df.attrs["update_error"] = str(exc)
         elif cached is not None:
@@ -246,7 +250,8 @@ class DataFeed:
         return df
 
     def _us_daily(self, symbol: str) -> pd.DataFrame | None:
-        cached = self.store.load("us", f"daily_{symbol}")
+        key=f'daily_yfinance_adjusted_{symbol}'
+        cached = self.store.load("us", key)
         if cached is not None and len(cached) and not self.cfg.reset_cache:
             self._used_source[symbol] = cached.attrs.get("source", "cache")
             return cached
@@ -267,27 +272,28 @@ class DataFeed:
                 df = self._normalize_daily(df)
                 if "volume" in df.columns:
                     df["turnover"] = df["volume"] / df["volume"].rolling(20).mean()
-                    df["amount"] = df["close"] * df["volume"] * 100.0
+                    df["amount"] = df["close"] * df["volume"]
                 df.attrs["source"] = "yfinance"
+                df.attrs.update(price_basis='yfinance_adjusted',quality_status='unverified_context_only',amount_unit='USD_estimate')
             except Exception as e:  # noqa: BLE001
                 print(f"[data] yfinance daily {symbol} failed ({e})")
         if df is None or df.empty:
             return None
         if df is not None and len(df):
-            self.store.save(df, "us", f"daily_{symbol}")
+            self.store.save(df, "us", key)
         return df
 
     def _normalize_daily(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         if "datetime" in df.columns:
-            df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+            df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce").dt.tz_localize(None)
             df = df[df["datetime"].notna()].set_index("datetime").sort_index()
         else:
             df.index = pd.to_datetime(df.index).tz_localize(None)
             df = df.sort_index()
         df = df[~df.index.duplicated(keep="last")]
         if "pct_chg" not in df.columns and "close" in df.columns:
-            df["pct_chg"] = df["close"].pct_change()
+            df["pct_chg"] = df["close"].pct_change(fill_method=None)
         if "turnover" in df.columns:
             df["turnover"] = pd.to_numeric(df["turnover"], errors="coerce")
         return df

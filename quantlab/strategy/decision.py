@@ -70,7 +70,7 @@ class FactorDecisionService:
             scores = composite_score(full, row, pen)
             exp = {}
             if fc.use_experts:
-                scores, exp = experts_score(full, row, pen, hist, lookback=fc.expert_ic_lookback)
+                scores, exp = experts_score(full, row, pen, hist, lookback=fc.expert_ic_lookback, cfg=fc)
             last = scores.loc[t].dropna() if scores is not None and t in scores.index else pd.Series(dtype=float)
         except ValueError as e:
             return ScoreDecision(str(t), "invalid", reasons=[str(e)])

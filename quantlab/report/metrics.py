@@ -22,8 +22,8 @@ def ann_vol(ret: pd.Series, periods: int = TRADING_DAYS) -> float:
 
 
 def sharpe(ret: pd.Series, rf: float = 0.0, periods: int = TRADING_DAYS) -> float:
-    v = ann_vol(ret, periods)
-    return float((ann_return((1 + ret.fillna(0)).cumprod(), periods) - rf) / v) if v > 0 else 0.0
+    r=pd.to_numeric(ret,errors='coerce').dropna();v=ann_vol(r,periods)
+    return float((r.mean()*periods-rf)/v) if v>0 else 0.0
 
 
 def max_drawdown(nav: pd.Series) -> float:
@@ -43,16 +43,16 @@ def win_rate(ret: pd.Series) -> float:
 
 
 def beta_alpha(nav: pd.Series, bench_nav: pd.Series, periods: int = TRADING_DAYS) -> dict:
-    a = pd.to_numeric(nav, errors="coerce").pct_change().dropna()
-    b = pd.to_numeric(bench_nav, errors="coerce").pct_change().dropna()
+    a = pd.to_numeric(nav, errors="coerce").pct_change(fill_method=None).dropna()
+    b = pd.to_numeric(bench_nav, errors="coerce").pct_change(fill_method=None).dropna()
     df = pd.concat({"a": a, "b": b}, axis=1).dropna()
     if df.shape[0] < 20:
         return {"beta": 0.0, "alpha_ann": 0.0, "excess": 0.0}
     cov = float(np.cov(df["a"], df["b"])[0][1])
-    var = float(np.var(df["b"]))
+    var = float(df['b'].var())
     beta = cov / var if var > 0 else 0.0
-    alpha_ann = ann_return(nav, periods) - beta * ann_return(bench_nav, periods)
-    excess = ann_return(nav, periods) - ann_return(bench_nav, periods)
+    alpha_ann = (df.a.mean()-beta*df.b.mean())*periods
+    excess = (df.a.mean()-df.b.mean())*periods
     return {"beta": beta, "alpha_ann": alpha_ann, "excess": excess}
 
 

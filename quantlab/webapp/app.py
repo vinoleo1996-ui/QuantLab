@@ -1,14 +1,4 @@
-"""QuantLab Web 看板 v2.1（全中文、实时行情、多专家决策）。
-
-启动: python -m quantlab.cli web --port 8899
-前置: 先 `quantlab.cli backtest` 生成 output/results.pkl 与 signals.json；
-     只读输出文件外，/api/holdings 每次调用会向新浪/腾讯请求实时行情。
-API:
-  /api/nav       总览 KPI + 净值/回撤图
-  /api/holdings  当前持仓（实时报价 + 成本口径 + 今/本年收益）
-  /api/signals   最新买卖信号
-  /api/experts   每日专家意见（读 output/monitor.json；?refresh=1 现算）
-"""
+"""Local simulation dashboard reading the latest integrity-checked versioned run. No archived root results/signals are promoted into current advice."""
 
 from __future__ import annotations
 
@@ -130,7 +120,6 @@ ol.run li{margin:7px 0}
     <button data-tab="holdings">实时持仓</button>
     <button data-tab="signals">买卖信号</button>
     <button data-tab="experts">专家决策</button>
-    <button data-tab="sector">申万行业动量</button>
     <button data-tab="run">运行指引</button>
   </div>
 </div>
@@ -268,7 +257,7 @@ async function loadSignals(){
   const th='<tr><th>代码</th><th>名称</th><th>目标权重</th><th>上期权重</th><th>操作</th></tr>';
   const tr=d.trades.map(t=>`<tr><td class="bolder">${t[0]}</td><td>${(d.names||{})[t[0]]||''}</td>
     <td>${pct(t[1])}</td><td>${pct(t[2])}</td>
-    <td><span class="tag ${t[3].includes('买入')?'buy':t[3].includes('卖出')?'sell':'hold'}">${t[3]}</span></td></tr>`).join('');
+    <td><span class="tag ${t[3].includes('买入')?'buy':(/卖出|清仓|减仓/.test(t[3]))?'sell':'hold'}">${t[3]}</span></td></tr>`).join('');
   document.getElementById('stable').innerHTML=th+tr;
 }
 
@@ -331,7 +320,7 @@ def api_nav():
     if not data:
         return jsonify({"error": "no data"}), 404
     result = data["result"]
-    if result.get("status") != "research_unvalidated":
+    if result.get("status") != "research_unvalidated" or not result.get('run_health',{}).get('research_interpretable',False):
         return jsonify({"status": result.get("status", "legacy_unvalidated"), "cards": [], "chart": "",
                         "last_exec": "", "extra": "历史结果或输入数据尚未验证，不发布收益与实盘建议。", "metrics": None})
     nav, dd = result["nav"], result["drawdown"]
@@ -350,7 +339,8 @@ def api_nav():
     extra = _extra_note(result)
     return jsonify({
         "cards": cards,
-        "chart": _nav_chart_v2(nav, dd),
+        "chart": _nav_chart_v2(nav, dd, result.get('benchmark')),
+        "run_id": result.get('run_id'),
         "last_exec": str(nav.index[-1].date()),
         "extra": extra,
     })
@@ -371,7 +361,8 @@ def _extra_note(result: dict) -> str:
     rows = [f"市场状态：<b>{state}</b> · 组合风险档位：<b>{scale:.0%} 仓</b>"]
     for r in (reasons or [])[:3]:
         rows.append(f"· {r}")
-    rows.append("数据源：" + str(src) + "；回测说明：含费用滑点、T+1执行、涨跌停掩码，但存在幸存者偏差（候选取自今日仍上市名单）。")
+    from html import escape
+    rows.append("数据源："+escape(str(src))+"；股票池覆盖："+escape(str(result.get('benchmark_manifest',{}).get('universe_coverage','unknown')))+"。基于每日账本；未完成策略有效性验证。")
     return f'<h2 style="font-size:14px;margin:0 0 8px"><span class="dot gray"></span>近期风控与口径</h2><div class="note">{"<br>".join(rows)}</div>'
 
 
@@ -386,7 +377,7 @@ def api_holdings():
     quote_time = None
     if rows:
         q = rows[0].get("price")
-        quote_time = _quote_marker()
+        quote_time = rows[0].get('quote_time')
     return jsonify({
         "status": summary_d.get("status", "blocked_data"),
         "account_type": "simulation",
@@ -444,10 +435,14 @@ def main(port: int = 8899) -> None:
     app.run(host="127.0.0.1", port=port, debug=False)
 
 
-def _nav_chart_v2(nav: pd.Series, dd: pd.Series) -> str:
+def _nav_chart_v2(nav: pd.Series, dd: pd.Series, benchmark=None) -> str:
     fig, ax = plt.subplots(2, 1, figsize=(11, 6.4),
                            gridspec_kw={"height_ratios": [2.2, 1]}, sharex=True)
     ax[0].plot(nav.index, nav.values, color="#2563eb", lw=1.4)
+    if benchmark is not None and not benchmark.empty:
+        b=benchmark.close.reindex(nav.index)
+        if b.notna().any():ax[0].plot(b.index,b/b.dropna().iloc[0]*nav.iloc[0],label='Benchmark price return',lw=1.)
+        ax[0].legend()
     ax[0].set_title("组合净值", fontsize=12)
     ax[0].grid(alpha=0.25)
     ax[1].fill_between(dd.index, dd.values * 100, 0, color="#dc2626", alpha=0.5)

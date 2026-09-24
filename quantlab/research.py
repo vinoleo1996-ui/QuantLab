@@ -11,7 +11,7 @@ from quantlab.config import CONFIG
 from quantlab.data.contracts import fingerprint, timestamp
 
 
-def walk_forward_splits(calendar, cfg=None):
+def walk_forward_splits(calendar, cfg=None, label_ends=None):
     cfg = cfg or CONFIG.research
     dates = pd.DatetimeIndex(calendar)
     if dates.empty: return []
@@ -26,33 +26,55 @@ def walk_forward_splits(calendar, cfg=None):
         valid = dates[(dates>=val_start)&(dates<test_start)]
         test = dates[(dates>=test_start)&(dates<test_end)]
         # Labels consume next-session entry plus horizon sessions; purge both boundaries.
-        train, valid = train[:-(cfg.horizon+1)], valid[:-(cfg.horizon+1)]
+        if label_ends is None:
+            train, valid = train[:-(cfg.horizon+1)], valid[:-(cfg.horizon+1)]
+        else:
+            train=purge_labels(train,label_ends,val_start)
+            valid=purge_labels(valid,label_ends,test_start)
         if len(train) and len(valid) and len(test): folds.append(dict(train=train, validation=valid, test=test))
         origin += pd.DateOffset(months=cfg.test_months)
     return folds
 
 
+def purge_labels(dates, label_ends, boundary):
+    """Keep only labels actually complete strictly before the next partition."""
+    dates=pd.DatetimeIndex(dates)
+    ends=pd.to_datetime(label_ends.reindex(dates))
+    return dates[ends.notna() & (ends < pd.Timestamp(boundary))]
+
+
 class ExperimentRegistry:
     def __init__(self, path, cfg=None):
-        self.path = Path(path)
-        self.cfg = cfg or CONFIG.research
+        import sqlite3
+        self.path=Path(path).with_suffix('.sqlite3')
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        self.cfg=cfg or CONFIG.research
+        with sqlite3.connect(self.path) as db:
+            db.executescript('CREATE TABLE IF NOT EXISTS trials (id TEXT PRIMARY KEY, body TEXT NOT NULL);'
+                             'CREATE TABLE IF NOT EXISTS folds (id TEXT, fold TEXT, PRIMARY KEY(id,fold));'
+                             'CREATE TABLE IF NOT EXISTS outcomes (id TEXT, fold TEXT, body TEXT NOT NULL, PRIMARY KEY(id,fold));')
 
-    def register(self, hypothesis, config, data_version, split, model_version):
-        row = dict(hypothesis=hypothesis, config=config, data_version=data_version,
-                   split=split, model_version=model_version, registered_at=pd.Timestamp.now(tz="UTC").isoformat())
-        rows = [json.loads(x) for x in self.path.read_text().splitlines()] if self.path.exists() else []
-        identity = fingerprint({k: v for k,v in row.items() if k!="registered_at"})
-        if any(x["id"]==identity for x in rows): return identity
-        if len(rows)>=self.cfg.max_trials: raise ValueError("model_search_budget_exhausted")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a") as f: f.write(json.dumps(dict(id=identity, **row), default=str)+"\n")
+    def register(self,hypothesis,config,data_version,split,model_version):
+        import sqlite3
+        body=dict(hypothesis=hypothesis,config=config,data_version=data_version,model_version=model_version)
+        identity=fingerprint(body)
+        with sqlite3.connect(self.path,timeout=30) as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM trials WHERE id=?',(identity,)).fetchone():
+                if db.execute('SELECT COUNT(*) FROM trials').fetchone()[0]>=self.cfg.max_trials:
+                    raise ValueError('model_search_budget_exhausted')
+                db.execute('INSERT INTO trials VALUES (?,?)',(identity,json.dumps(body,default=str)))
+            db.execute('INSERT OR IGNORE INTO folds VALUES (?,?)',(identity,str(split)))
         return identity
 
-    def record(self, trial_id, outcome):
-        rows = [json.loads(x) for x in self.path.read_text().splitlines()]
-        if not any(x["id"]==trial_id for x in rows): raise ValueError("unregistered_trial")
-        out = self.path.with_name(self.path.stem+"_outcomes.jsonl")
-        with out.open("a") as f: f.write(json.dumps(dict(id=trial_id, outcome=outcome), default=str)+"\n")
+    def record(self,trial_id,outcome):
+        import sqlite3
+        fold=str(outcome.get('fold','default'))
+        with sqlite3.connect(self.path,timeout=30) as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM trials WHERE id=?',(trial_id,)).fetchone(): raise ValueError('unregistered_trial')
+            if db.execute('SELECT 1 FROM outcomes WHERE id=? AND fold=?',(trial_id,fold)).fetchone(): raise ValueError('outcome_already_recorded')
+            db.execute('INSERT INTO outcomes VALUES (?,?,?)',(trial_id,fold,json.dumps(outcome,default=str)))
 
 
 def block_bootstrap_ci(excess_returns, seed=None, block=20, samples=2000):
@@ -70,7 +92,10 @@ def block_bootstrap_ci(excess_returns, seed=None, block=20, samples=2000):
 
 def promotion_gate(evidence, cfg=None):
     cfg = cfg or CONFIG.research
-    reasons = []
+    if 'artifacts' in evidence:
+        from quantlab.evidence import verify_bundle
+        return verify_bundle(evidence, evidence.get('root', '.'))
+    reasons = ['verified_evidence_bundle_required']
     for name in ("accounting_passed", "temporal_passed", "pit_coverage_passed", "stress_passed", "execution_calibrated"):
         if evidence.get(name) is not True: reasons.append(name+"_missing_or_failed")
     fold_excess = evidence.get("fold_net_excess", [])

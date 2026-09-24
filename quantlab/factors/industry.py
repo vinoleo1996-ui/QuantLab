@@ -1,21 +1,4 @@
-"""申万一级行业动量（真实行业 K线，同花顺申万板块接口）。
-
-行业中性化/行业动量的诚实基础：
-- 业界标准是"申万一级行业成分 → 个股→行业映射 → 行业去均值"。但本机出口 IP 下
-  东财成分 / baostock / 申万官网 / 新浪 / 腾讯成分 全部被服务端禁(见 sources._a_daily 的
-  六源探测记录)，唯一 200 可达的申万行业真实日频数据 = 同花顺申万行业板块系列
-  (d.10jqka.com.cn/v6/line/bk_88xxxx, 银行881101 … 申万一级/二级 881xxx)。
-- 因此"真实行业"以**行业动量(板块K线日收益)**形式落地：它们本身就是申万一级行业指数，
-  可牛顿直算申万一级行业动量/反转、行业宽基波动率、行业关联，用于行业动量因子与
-  组合行业暴露的诚实度量。
-- 个股→行业成分映射在本出口不可达，保持 NA：**绝不伪造**（若伪造"银行=某股"，就是在
-  重造本轮已删除的合成数据，被明令禁止）。网络恢复后 fetch_industry_a() 自动补全成分。
-
-用法：
-    from quantlab.factors.industry import fetch_sw_kline, sector_momentum
-    panel = fetch_sw_kline()          # 31 申万一级行业"板块"日K线面板(缓存)
-    mom   = sector_momentum(panel)    # 各申万一级行业动量序列
-"""
+"""Legacy public board-series diagnostics only. Board prices do not establish historical stock industry membership and are not used to certify industry neutrality. The opportunity model uses dated security records from MarketDataset."""
 
 from __future__ import annotations
 

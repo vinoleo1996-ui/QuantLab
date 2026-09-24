@@ -1,12 +1,4 @@
-"""当前持仓快照：依赖 results.pkl(最新执行权重) + 实时行情(新浪/腾讯)。
-
-口径说明：
-- 「建仓日/成本」= 最近一次"开始连续持有"的那期执行日及其收盘价
-  (从最新往回找，出现 w=0 前的最后一个 >0 段起点)；2026 起新进场的票即显示真实买入成本。
-- 「今年以来」以本组合实盘起点 2026-01-05 为基准(权重未变，直接比价)。
-- 现价为新浪批量实时报价(腾讯回退)。
-输出每字段均为 JSON 友好基础类型。
-"""
+"""Read verified versioned simulation accounts. Ledger marks and FIFO lot costs are distinct from timestamped public quotes. No broker account is inferred from a backtest."""
 
 from __future__ import annotations
 
@@ -23,16 +15,17 @@ YEAR_START = "2026-01-05"
 
 def _load_result():
     import json
+    from quantlab.report.runs import load_run
     latest = OUTPUT_DIR / "runs" / "latest.json"
     if latest.exists():
         run = json.loads(latest.read_text())["run_id"]
-        with (OUTPUT_DIR / "runs" / run / "result.pkl").open("rb") as fh:
-            return {"result": pickle.load(fh), "source": "versioned_replay"}
+        try:
+            return {"result": load_run(OUTPUT_DIR / 'runs' / run), "source": "versioned_replay"}
+        except (ValueError,KeyError,OSError):
+            return {'result':{'status':'unverified_artifacts'},'source':'unverified_artifacts'}
     p = OUTPUT_DIR / "results.pkl"
     if not p.exists(): return None
-    with p.open("rb") as fh: data = pickle.load(fh)
-    data["result"]["status"] = "legacy_unvalidated"
-    return data
+    return {'result':{'status':'legacy_unvalidated'},'source':'archived_legacy'}
 
 
 def _entry_of(wh: pd.DataFrame, code: str) -> pd.Timestamp:
@@ -68,13 +61,15 @@ def snapshot(with_quotes=True):
             pass  # Optional public quote adapters; dated account marks remain explicitly labelled.
     rows = []
     for code, qty in quantities.items():
-        panel = result["input_panels"][code].loc[:state["date"]]
-        price = float(panel.close.dropna().iloc[-1])
-        live = float(quotes.loc[code, "price"]) if code in quotes.index else None
-        rows.append(dict(code=code, name=code, quantity=qty, weight=state["weights"][code],
-                         account_type="simulation", as_of=str(state["date"]), cost=None, entry_date=None,
-                         price=price, live_quote=live, pct_chg=None, market_value=qty*price,
-                         return_since_entry=None, return_ytd=None, profit_since_entry=None, profit_ytd=None,
+        price = state.get('marks',{}).get(code)
+        quote=quotes.loc[code].to_dict() if code in quotes.index else {}
+        live=quote.get('price');cost=state.get('cost_basis',{}).get(code)
+        rows.append(dict(code=code, name=quote.get('name',code), quantity=qty, weight=state["weights"][code],
+                         account_type="simulation", as_of=str(state["date"]),run_id=result['run_id'], cost=cost, entry_date=state.get('entry_dates',{}).get(code),
+                         price=price, live_quote=live,quote_time=quote.get('time'),quote_source=quote.get('source'),
+                         pct_chg=quote.get('pct_chg'),market_value=qty*price if price else None,
+                         return_since_entry=(price/cost-1) if cost and price else None, return_ytd=None,
+                         profit_since_entry=qty*(price-cost) if cost and price else None, profit_ytd=None,
                          lot_cost=None, lot_affordable=None))
     return rows
 
@@ -94,6 +89,7 @@ def summary() -> dict:
     result = data["result"]
     out["status"] = result.get("status", "legacy_unvalidated")
     out["account_type"] = "simulation"
+    out['run_id']=result.get('run_id')
     if out["status"] != "research_unvalidated": return out
     nav = result.get("nav")
     if nav is not None and len(nav):
