@@ -144,6 +144,18 @@ class MarketDataset:
     industry_records: pd.DataFrame = field(default_factory=pd.DataFrame)
     financials: pd.DataFrame = field(default_factory=pd.DataFrame)
 
+    def __post_init__(self):
+        # Dictionary-encoded Parquet dates are storage categories, not ordered
+        # economic categories. pandas 3 may preserve that dtype through both
+        # to_datetime and map(timestamp), making valid temporal comparisons fail.
+        # Decode only these small event columns; preserve values, time zones,
+        # missing dates, the caller's frame, and all hashed files on disk.
+        dates=('record_date','ex_date','pay_date','share_date','available_at')
+        encoded=[c for c in dates if c in self.actions and isinstance(self.actions[c].dtype,pd.CategoricalDtype)]
+        if encoded:
+            self.actions=self.actions.copy()
+            for c in encoded:self.actions[c]=self.actions[c].astype(object)
+
     @property
     def version(self):
         extra = {}
