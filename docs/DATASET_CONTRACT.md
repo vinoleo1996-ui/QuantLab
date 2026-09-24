@@ -69,6 +69,18 @@ ETF行业穿透：`instrument_id, effective_at, available_at, sector, weight`。
 
 ## 输出与状态
 
+### 分层免费研究
+
+`load_dataset(..., profile="free_research")`与`research_assessment`用于显式研究入口。原始价格、日历、证券状态/上市资格、基准身份和价量字段仍须结构校验；公司行动覆盖证明不足可继续记录条件账面路径，但不获得严格验收资格。历史市值与指数成分不属于`pit_liquidity`必需字段。
+
+`price_volume`关闭行业特征，缺行业不阻断该模块；未知行业统一保守归组，不能填写今天行业。`price_volume_industry`仍要求历史行业。公告模块保持关闭。
+
+免费日线推导采用`open_status=derived`、`open_status_basis=daily_open_assumption`和`rule_version=cn_daily_v1`，同时记录日级ST、上市年龄下界与交易所除权参考价；明确没有历史实测开盘状态。严格撮合拒绝该假设，研究撮合校验制度和价格界限后使用。制度表不覆盖的上市例外保持未知，不能把统一44%套到所有新股。
+
+`data_gaps`保存证券、事件日和原因。无法解释的权益事件所覆盖标签被清除，并使事后相关特征失效；事件以前的信号不修改。若当日持仓受影响，账本记缺口；持仓行情消失仍保留股数和陈旧估值，不进行末价结算。`research_ready`只表示可启动分层实验，不能作为`qualified_for_daily_research`或实盘批准使用。
+
+首轮研究汇总的`conditional_metrics`必须与`accounting_qualified=false`、执行假设和实际现金比例同时展示；正式`metrics`保持空值，不能送入晋升门禁冒充合格绩效。
+
 所有结果含`run_id, data_version, model_version, as_of, status, promotion_approved`。运行目录另存实际基准、代码文件哈希和依赖版本。
 
 - `blocked_data`：未满足契约，指标为空。

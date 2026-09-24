@@ -54,7 +54,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
     payload=dict(protocol=protocol,data_version=ds.version,config=asdict(cfg))
     if contract.exists() and json.loads(contract.read_text())!=json.loads(json.dumps(payload,default=str)):raise ValueError('protocol_immutable')
     if not contract.exists():contract.write_text(json.dumps(payload,default=str,indent=2))
-    assessment=qualification(ds)
+    assessment=qualification(ds,require_industry=cfg.research.feature_profile=='price_volume_industry')
     fixture=ds.manifest.get('source')=='TEST_FIXTURE' and allow_test_fixture
     if assessment['status']!='qualified_for_daily_research' and not fixture:
         result=blocked_result(assessment['reasons']);persist_run(result,root=out/'runs')
@@ -66,7 +66,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
     # Register all model/diagnostic definitions before observing any validation results.
     for spec in protocol['candidates']+[{ 'diagnostic':x} for x in protocol.get('diagnostics',[])]:
         registry.register('opportunity-module',spec,ds.version,'protocol','opportunity-v1')
-    raw=opportunity_features(ds);features=normalized_features(raw);labels=forward_labels(ds,cfg.research.horizon)
+    raw=opportunity_features(ds,profile=cfg.research.feature_profile);features=normalized_features(raw);labels=forward_labels(ds,cfg.research.horizon)
     raw.to_parquet(out/'raw_features.parquet');features.to_parquet(out/'features.parquet');labels.to_parquet(out/'labels.parquet')
     ends=labels.groupby(level='date').label_end.max()
     calendar=ds.calendar[ds.calendar<=pd.Timestamp(ds.manifest['as_of']).normalize()]
@@ -81,7 +81,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
         for spec in protocol['candidates']:
             trial=registry.register('opportunity-module',spec,ds.version,str(k),'opportunity-v1')
             try:
-                model=OpportunityModel(**spec,horizon=cfg.research.horizon).fit(features,labels,fold['train'],valid[0])
+                model=OpportunityModel(**spec,horizon=cfg.research.horizon,profile=cfg.research.feature_profile).fit(features,labels,fold['train'],valid[0])
                 forecast=_forecasts(model,features,ds,cfg,valid,prepared)
                 run=engine.run(ds,strategy='opportunity',forecasts=forecast,start=valid[0],end=valid[-1],prepared=prepared)
                 value=float(compare_returns(run['daily_return'],control['daily_return']).mean()*252) if usable(run) and usable(control) else None
@@ -94,7 +94,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
             selection.append(dict(fold=k,status='no_valid_candidate'));continue
         best=max(evaluated,key=lambda x:x[0])[1]
         fit_dates=fold['train'].append(fold['validation'])
-        model=OpportunityModel(**best,horizon=cfg.research.horizon).fit(features,labels,fit_dates,test[0])
+        model=OpportunityModel(**best,horizon=cfg.research.horizon,profile=cfg.research.feature_profile).fit(features,labels,fit_dates,test[0])
         forecasts=_forecasts(model,features,ds,cfg,test,prepared);all_forecasts.update(forecasts)
         from quantlab.strategy.opportunity import save_model
         save_model(model,out/'models'/f'fold_{k}.json')
@@ -146,7 +146,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
         if name in ('monthly','horizon21'):
             forecasts={};dl=labels if dc.research.horizon==20 else forward_labels(ds,dc.research.horizon)
             for f,best,_ in models:
-                model=OpportunityModel(**best,horizon=dc.research.horizon).fit(features,dl,f['train'].append(f['validation']),f['test'][0])
+                model=OpportunityModel(**best,horizon=dc.research.horizon,profile=dc.research.feature_profile).fit(features,dl,f['train'].append(f['validation']),f['test'][0])
                 forecasts.update(_forecasts(model,features,ds,dc,f['test'],dp))
         run=Engine(dc).run(ds,strategy=kwargs.pop('strategy','opportunity'),forecasts=forecasts,start=start,end=end,prepared=dp,**kwargs)
         diagnostics[name]=summary(run);registry.record(trial,dict(fold='diagnostic',**diagnostics[name]));persist_run(run,root=out/'runs')

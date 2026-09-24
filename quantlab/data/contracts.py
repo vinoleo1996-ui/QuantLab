@@ -103,7 +103,8 @@ class MarketDataset:
                             "calendar": list(self.calendar), "benchmark": frame_hash(self.benchmark),
                             "announcements": frame_hash(self.announcements), "exposures": frame_hash(self.exposures)})
 
-    def validate(self) -> list[str]:
+    def validate(self, profile="strict") -> list[str]:
+        if profile not in ("strict", "free_research"): raise ValueError("unknown_data_profile")
         errors = []
         m = self.manifest
         for field in ("source", "revision", "universe_coverage", "actions_coverage", "price_basis", "as_of"):
@@ -113,7 +114,7 @@ class MarketDataset:
             errors.append("market_units_unverified")
         if m.get("universe_coverage") not in ("historical", "snapshot_research"):
             errors.append("historical_universe_unverified")
-        if m.get("actions_coverage") != "complete": errors.append("corporate_actions_unverified")
+        if m.get("actions_coverage") != "complete" and profile == "strict": errors.append("corporate_actions_unverified")
         if not self.calendar.is_monotonic_increasing or self.calendar.has_duplicates or self.calendar.empty:
             errors.append("invalid_exchange_calendar")
         try:
@@ -159,7 +160,7 @@ class MarketDataset:
                 for c, p in self.panels.items()}
 
 
-def load_dataset(path: str | Path) -> MarketDataset:
+def load_dataset(path: str | Path, profile="strict") -> MarketDataset:
     """Load immutable parquet/CSV inputs; verify hashes instead of silently accepting edits."""
     path = Path(path).resolve()
     m = json.loads(path.read_text())
@@ -182,7 +183,7 @@ def load_dataset(path: str | Path) -> MarketDataset:
                             dated(read(m["benchmark"])),
                             read(m["announcements"]) if m.get("announcements") else pd.DataFrame(),
                             read(m["exposures"]) if m.get("exposures") else pd.DataFrame(), m)
-    errors = dataset.validate()
+    errors = dataset.validate(profile)
     if errors: raise DataContractError("; ".join(errors))
     dataset.evidence_root = root
     return dataset

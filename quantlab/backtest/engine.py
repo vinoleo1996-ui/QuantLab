@@ -85,10 +85,16 @@ class Engine:
     def run_dataset(self, dataset, *, strategy="opportunity",
                     diagnostic=False, risk_mode="daily", prepared=None, target_schedule=None,
                     start=None, end=None, cost_mult=1.0, liquidity_mult=1.0, blocked_sessions=(),
-                    execution_delay=0, forecasts=None, review_override=None, crowding=True, initial_state=None):
+                    execution_delay=0, forecasts=None, review_override=None, crowding=True, initial_state=None, data_mode='strict'):
         if self.market != "a": return blocked_result(["us_execution_not_validated"], self.market)
         if risk_mode not in ("daily", "legacy_monthly"): raise ValueError("invalid_risk_policy")
-        errors = dataset.validate()
+        if data_mode not in ('strict','free_research'):raise ValueError('unknown_data_mode')
+        assessment=None
+        errors = dataset.validate(data_mode)
+        if data_mode=='free_research':
+            from quantlab.data.qualification import research_assessment
+            assessment=research_assessment(dataset,require_industry=self.cfg.research.feature_profile=='price_volume_industry')
+            errors=assessment['reasons']
         if errors and not diagnostic: return blocked_result(errors)
         mandate = None if diagnostic else Mandate.from_config(self.cfg)
         if mandate and not dataset.instruments.asset_type.isin(mandate.allowed_assets).all():
@@ -116,7 +122,7 @@ class Engine:
         if "review_override" in p: reviews &= set(p["review_override"])
         if strategy in ("buy_hold", "monthly_equal", "vol_matched_equal") and len(dates): reviews.add(dates[0])
         account = Ledger(cfg.capital.init_cash, cfg.cost.a_slippage, cfg.research.cash_buffer,
-                         cfg.research.participation, cost_mult, cfg.cost.min_trade_value)
+                         cfg.research.participation, cost_mult, cfg.cost.min_trade_value,allow_open_assumption=data_mode=='free_research')
         risk = RiskManager(cfg.risk, cfg.research, cfg.portfolio.target_vol) if risk_mode == "daily" else LegacyMonthlyRisk(cfg)
         regime = Regime(dataset.benchmark.close) if not dataset.benchmark.empty else None
         states, decisions, traces, allocation_issues = [], [], [], []
@@ -131,7 +137,7 @@ class Engine:
             if account.snapshots and dates[0]<=account.snapshots[-1]['date']:raise ValueError('forward_session_not_new')
         config_dump = asdict(cfg)
         run_id = fingerprint({"data": p["version"], "config": config_dump, "strategy": strategy,
-                              "start": str(start), "end": str(end), "risk": risk_mode,
+                              "start": str(start), "end": str(end), "risk": risk_mode,"data_mode":data_mode,
                               "cost": cost_mult, "liquidity": liquidity_mult, "blocked": list(blocked_sessions),
                               "delay": execution_delay, "schedule": target_schedule,
                               "forecasts": {str(d):dict(model=f.model_version,training=f.training_cutoff,mu=f.expected_returns.to_dict()) for d,f in (forecasts or {}).items()},
@@ -139,6 +145,9 @@ class Engine:
                               "initial_account": None if initial_state is None else dict(cash=account.cash,lots={c:[asdict(l) for l in ls] for c,ls in account.lots.items()},risk=last_risk,orders=account.export()['orders'])})[:24]
         for d in dates:
             session = int(dataset.calendar.get_loc(d))
+            for gap in dataset.manifest.get('data_gaps',[]):
+                if pd.Timestamp(gap['date'])==d and account.quantity(gap['instrument_id']):
+                    account.data_issues.append(dict(gap,held_shares=account.quantity(gap['instrument_id'])))
             bars = p["bars"].get(d, {})
             if d in blocked_sessions:
                 bars = {c: dict(b, open_status="halted") for c, b in bars.items()}
@@ -234,6 +243,8 @@ class Engine:
                     traces.append(dict(date=str(d),status='invalid',reasons=['forecast_missing_or_invalid']))
                     continue
                 forecast.validate(d)
+                if forecast.trace.get('feature_profile',cfg.research.feature_profile)!=cfg.research.feature_profile:
+                    raise ValueError('forecast_feature_profile_mismatch')
                 if forecast.horizon!=cfg.research.horizon:raise ValueError('forecast_horizon_mismatch')
                 mu=forecast.expected_returns.reindex(eligible).dropna()
                 ranks=mu.rank(pct=True)
@@ -258,14 +269,15 @@ class Engine:
                 allowed=set(desired) if last_risk.get('allow_new_stock',True) else {c for c in desired if rules[c].asset_type=='equity_etf'}
                 locked={}
                 for c in held:
-                    permission,_=trade_permission(bars.get(c),rules[c],'sell',d)
+                    permission,_=trade_permission(bars.get(c),rules[c],'sell',d,allow_open_assumption=data_mode=='free_research')
                     if (not permission or account.available(c,session)<held[c] or
                         account.holding_age(c,session)<cfg.capital.min_holding_period_days):locked[c]=previous[c]
                 rs=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,codes,cfg.research.downside_corr,account.nav()) if crowding else None
                 returns=close.loc[:d,codes].pct_change(fill_method=None).tail(cfg.portfolio.vol_est_window)
                 x,status=allocate(returns,records,exposure_matrix(dataset,d,records,codes),cfg,
                                   last_risk['gross_scale'],last_risk['vol_scale'],expected,previous,risk_snapshot=rs,
-                                  locked=locked,nav=account.nav(),date=d,cost_mult=cost_mult,allowed_new=allowed)
+                                  locked=locked,nav=account.nav(),date=d,cost_mult=cost_mult,allowed_new=allowed,
+                                  industry_policy='unknown_capped' if cfg.research.feature_profile=='price_volume' else 'verified')
                 if status!='ok':
                     allocation_issues.append(dict(date=str(d),reason=status));account.cancel_buys(status);continue
                 target=x.to_dict();reason='opportunity'
@@ -311,6 +323,7 @@ class Engine:
         model_versions=sorted({f.model_version for f in (forecasts or {}).values()})
         reported_model=(model_versions[0] if len(model_versions)==1 else 'schedule-'+fingerprint(model_versions)[:20]) if strategy=='opportunity' else "baseline-"+strategy
         result = {"nav": nav, "daily_return": ret, "drawdown": dd, "trades": decisions,
+                  "data_mode":data_mode,"data_assessment":assessment,
                   "weight_history": [pd.Series(x["weights"], name=x["date"], dtype=float) for x in account.snapshots],
                   "factor_panels": {}, "ic_matrix": pd.DataFrame(), "codes": list(close), "market": self.market,
                   "run_id": run_id, "data_version": p["version"], "model_version": reported_model,
@@ -327,6 +340,9 @@ class Engine:
         result['run_health']=dict(allocation_failures=len(allocation_issues),decision_count=len(decisions),forecast_failures=forecast_failures,
             data_issue_count=len(account.data_issues),mean_cash_weight=float(np.mean([a['cash']/a['nav'] for a in account.snapshots])),
             research_interpretable=not allocation_issues and not account.data_issues and not forecast_failures)
+        if assessment is not None and not assessment['accounting_verified']:
+            result['run_health']['research_interpretable']=False
+            result['reasons']=result['reasons']+['accounting_coverage_unverified']
         return result
 
 

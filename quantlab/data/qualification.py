@@ -65,9 +65,34 @@ def qualification(ds, *, require_industry=True):
                 announcement_model='disabled_pending_PIT_incremental_evidence',promotion_approved=False)
 
 
-def audit_manifest(path):
+def research_assessment(ds, *, require_industry=False):
+    """Admit an explicitly limited experiment, without asserting provider completeness."""
+    reasons=ds.validate('free_research')
+    if ds.manifest.get('source')=='TEST_FIXTURE':reasons.append('synthetic_test_fixture')
+    if ds.manifest.get('universe_coverage')!='historical':reasons.append('historical_universe_required')
+    if not ds.panels:reasons.append('empty_universe')
+    for code,p in ds.panels.items():
+        for field in ('amount','turnover'):
+            if field not in p:reasons.append('price_volume_missing:'+code+':'+field)
+        if 'amount' in p and (p.amount.dropna()<0).any():reasons.append('negative_amount:'+code)
+    sectors=ds.instruments.get('sector',pd.Series(dtype=str))
+    industry=bool(len(sectors)) and not (sectors.isna()|sectors.isin(['UNKNOWN','NA',''])).any()
+    if require_industry and not industry:reasons.append('historical_industry_incomplete')
+    warnings=['public_data_revisions_not_independently_verified','opening_capacity_unverified']
+    if not industry:warnings.append('industry_disabled_unknown_exposure_capped')
+    if ds.manifest.get('actions_coverage')!='complete':warnings.append('accounting_coverage_unverified')
+    if any(p.get('open_status',pd.Series(dtype=str)).eq('derived').any() for p in ds.panels.values()):
+        warnings.append('daily_open_execution_is_explicit_assumption')
+    return dict(status='blocked_data' if reasons else 'research_ready',reasons=sorted(set(reasons)),
+        warnings=warnings,data_version=ds.version,promotion_approved=False,
+        modules=dict(price_volume=not reasons,industry=industry,announcements=False,execution_capacity=False),
+        accounting_verified=ds.manifest.get('actions_coverage')=='complete' and not ds.manifest.get('data_gaps'))
+
+
+def audit_manifest(path, profile="strict", require_industry=True):
     path=Path(path)
     if not path.exists():return dict(status='blocked_data',reasons=['dataset_manifest_missing'],path=str(path),promotion_approved=False)
     try:
-        return qualification(load_dataset(path))
+        ds=load_dataset(path,profile)
+        return research_assessment(ds,require_industry=require_industry) if profile=='free_research' else qualification(ds,require_industry=require_industry)
     except (ValueError,KeyError,OSError,AttributeError) as exc:return dict(status='blocked_data',reasons=[str(exc)],promotion_approved=False)

@@ -150,6 +150,7 @@ class RiskConfig:
 @dataclass
 class ResearchConfig:
     model_version: str = "opportunity-ledger-v3"
+    feature_profile: str = "price_volume_industry"
     horizon: int = 20
     train_months: int = 36
     validation_months: int = 6

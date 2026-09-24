@@ -49,12 +49,22 @@ def price_bounds(bar,rule):
     return upper,lower
 
 
-def trade_permission(bar, rule: InstrumentRules, side, date):
+def trade_permission(bar, rule: InstrumentRules, side, date, *, allow_open_assumption=False):
     if bar is None: return False, "missing_open"
     px = bar.get("open", np.nan)
     if not np.isfinite(px) or px <= 0: return False, "missing_open"
     # Full-day amount/volume is not available at the opening execution time.
-    if bar.get("open_status") != "trading": return False, "unknown_or_halted_open"
+    derived=(allow_open_assumption and bar.get('open_status')=='derived' and
+             bar.get('open_status_basis')=='daily_open_assumption' and bar.get('rule_version')=='cn_daily_v1')
+    if derived:
+        from quantlab.data.exchange_rules import limit_ratio,limit_prices
+        ratio=limit_ratio(rule.instrument_id,date,bar.get('is_st_at_open',np.nan),bar.get('listing_session_lower_bound'))
+        ref=bar.get('reference_price',np.nan)
+        if ratio is None or not np.isfinite(ref) or ref<=0:return False,'unverified_derived_limit_rule'
+        upper,lower=limit_prices(ref,ratio,rule.price_tick)
+        if any(not np.isfinite(bar.get(k,np.nan)) or abs(bar[k]-v)>rule.price_tick/10 for k,v in [('limit_up',upper),('limit_down',lower)]):
+            return False,'derived_limit_mismatch'
+    if bar.get("open_status") != "trading" and not derived: return False, "unknown_or_halted_open"
     when = bar.get("open_status_available_at")
     if when is None or pd.isna(when) or timestamp(when) > timestamp(date) + pd.Timedelta(hours=9, minutes=30):
         return False, "opening_status_not_available"
@@ -67,7 +77,8 @@ def trade_permission(bar, rule: InstrumentRules, side, date):
 
 
 class Ledger:
-    def __init__(self, cash=600_000.0, slippage=0.003, cash_buffer=0.02, participation=0.01, cost_mult=1.0, min_trade_value=1000.):
+    def __init__(self, cash=600_000.0, slippage=0.003, cash_buffer=0.02, participation=0.01, cost_mult=1.0, min_trade_value=1000., allow_open_assumption=False):
+        self.allow_open_assumption=allow_open_assumption
         self.min_trade_value = min_trade_value
         self.initial_cash = money(cash)
         self.cash = money(cash)
@@ -240,7 +251,7 @@ class Ledger:
             if rule is None:
                 o.reject_reason = "unknown_rules"
                 continue
-            allowed, why = trade_permission(bars.get(c), rule, side, date)
+            allowed, why = trade_permission(bars.get(c), rule, side, date,allow_open_assumption=self.allow_open_assumption)
             if not allowed:
                 o.reject_reason = why
                 if side == "buy": o.status = "expired"
@@ -303,7 +314,8 @@ class Ledger:
             self.fills.append({"order_id": o.order_id, "instrument_id": c, "side": side, "date": str(pd.Timestamp(date).date()),
                                "quantity": qty, "price": px, "notional": notional, "commission": commission,
                                "stamp_tax": stamp, "dividend_tax": dividend_tax, "fees": fees, "slippage_cost": money(abs(px-px0)*qty),
-                               "signal_date": o.signal_date, "reason": o.reason, "cash_after": self.cash})
+                               "signal_date": o.signal_date, "reason": o.reason, "cash_after": self.cash,
+                               "execution_basis": bars[c].get('open_status_basis','observed_status')})
             if side == "buy" and o.remaining: o.status, o.reject_reason = "expired", "partial_day_order"
         if self.cash < -0.005: raise AssertionError("negative cash")
 

@@ -13,7 +13,11 @@ def allocate(returns, records, exposures, cfg, gross=.98, vol_scale=1., expected
     if expected is None:return empty,'forecast_required'
     missing=[c for c in codes if records.loc[c].asset_type=='stock' and
              (pd.isna(records.loc[c].get('sector')) or str(records.loc[c].get('sector')) in ('UNKNOWN','NA',''))]
-    if missing and industry_policy!='disabled_diagnostic':return empty,'industry_coverage_insufficient'
+    if missing and industry_policy not in ('disabled_diagnostic','unknown_capped'):return empty,'industry_coverage_insufficient'
+    if missing and industry_policy=='unknown_capped':
+        # Unknown holdings share one conservative group; never invent industries.
+        exposures=exposures.copy()
+        exposures.loc['UNKNOWN',codes]=[1. if c in missing else 0. for c in codes]
     prior=pd.Series(dtype=float) if previous is None else previous
     prior=prior.reindex(codes,fill_value=0.).to_numpy()
     r=returns.dropna()

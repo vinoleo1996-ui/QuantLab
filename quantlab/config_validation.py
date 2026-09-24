@@ -10,7 +10,7 @@ ACTIVE = {
     "portfolio": {"target_vol", "vol_est_window", "max_sector_weight", "lw_shrinkage"},
     "cost": {"a_slippage", "min_trade_value"},
     "risk": {"stop_loss_single", "drawdown_alert", "drawdown_reduce", "drawdown_exit", "drawdown_halt", "vol_reduction_factor"},
-    "research": {"model_version", "horizon", "train_months", "validation_months", "test_months", "max_trials",
+    "research": {"model_version", "feature_profile", "horizon", "train_months", "validation_months", "test_months", "max_trials",
                  "max_stock_weight", "max_etf_weight", "max_etfs", "max_cluster_weight", "downside_corr", "risk_aversion", "crowding_cost", "liquidity_cost", "cash_buffer", "participation", "entry_percentile",
                  "exit_percentile", "exit_reviews", "recovery_buffer", "recovery_sessions", "forward_months", "universe_mode"},
 }
@@ -38,6 +38,7 @@ def validate_config(cfg):
             raise ValueError(f"inactive_config_field:{group}.{name}; not implemented for this engine")
     if cfg.capital.rebalance_rule not in ("monthly", "weekly", "every_n_weeks"): raise ValueError("invalid_rebalance_rule")
     if cfg.research.model_version != "opportunity-ledger-v3": raise ValueError("unpromoted_model_version")
+    if cfg.research.feature_profile not in ('price_volume','price_volume_industry'):raise ValueError('unknown_feature_profile')
     if cfg.research.universe_mode not in ("pit_cap", "pit_liquidity", "snapshot_research"): raise ValueError("invalid_universe_mode")
     if cfg.capital.init_cash<=0 or cfg.capital.a_share_positions<1: raise ValueError("invalid_capital")
     if not 0<=cfg.research.cash_buffer<1 or not 0<cfg.research.participation<=1: raise ValueError("invalid_execution_limits")

@@ -31,6 +31,10 @@ def panels_for_research(dataset):
             idx.loc[t], prev = value, px
             pending_cash, pending_ratio = 0., 1.
         close[c] = idx
+        for gap in dataset.manifest.get('data_gaps',[]):
+            if gap.get('instrument_id')==c and gap.get('reason')!='delisting_settlement_unverified':
+                d=pd.Timestamp(gap['date'])
+                if d in idx.index:idx.loc[d]=np.nan
         amount[c] = p.get("amount", pd.Series(np.nan, index=dates)).where(known)
         turnover[c] = p.get("turnover", pd.Series(np.nan, index=dates)).where(known)
     return pd.DataFrame(close), pd.DataFrame(amount), pd.DataFrame(turnover)

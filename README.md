@@ -1,6 +1,6 @@
 # QuantLab
 
-A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只做多、允许现金、不加杠杆；每周评估机会、每日检查风险。**当前无合格真实数据上的新策略业绩，正式运行返回 `blocked_data`。**
+A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只做多、允许现金、不加杠杆；每周评估机会、每日检查风险。**支持分层的免费真实数据研究；严格数据验收和实盘晋升仍未通过。**
 
 当前开发以[实施状态及后续顺序](docs/IMPLEMENTATION_V3_2026-09-24.md)、[策略规范](docs/STRATEGY.md)和[数据契约](docs/DATASET_CONTRACT.md)为准。旧审查和研究材料归档于docs/archive，不再维护多份现行方案。
 
@@ -18,6 +18,22 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 公开数据适配器为可选依赖，见 `requirements-data.txt`；本机离线研究锁不包含所有网络后端。接口可用不等于PIT数据合格。采购和密钥授权另行决定。
 
 ## 正式研究入口
+
+### 免费数据首轮回放
+
+```bash
+# 安装requirements-data.txt中的baostock适配器后，按历史名单固定样本并抓取
+.venv2/bin/python scripts/collect_free_research.py
+.venv2/bin/python scripts/build_free_dataset.py
+.venv2/bin/python -m quantlab.cli data-audit --manifest data/free_research/dataset/manifest.json --data-mode free_research --feature-profile price_volume
+.venv2/bin/python -m quantlab.cli free-research
+```
+
+24只样本在2014历史名单中按固定种子预选，保留后来退市证券；它不是全市场选股证据。复用`pit_liquidity`池和同一现金账本，先运行市场残差趋势与上涨质量；行业模块关闭，未知行业统一按25%总仓位上限约束。模型固定Ridge1、训练2017—2019、2020起回放，未做参数择优，不冒充36/6/6正式滚动检验。
+
+输出`conditional_metrics`是公开数据与日线开盘假设下的账面路径，`metrics=null`、`promotion_approved=false`。退市末价只用于带陈旧标记的估值，不结算成现金；缺失权益不声称损失有界。行业、公告和执行容量分别验收，不再要求首轮把所有模块的数据一次补齐。
+
+### 严格验收入口
 
 ```bash
 .venv2/bin/python -m quantlab.cli data-audit --manifest data/research/manifest.json
