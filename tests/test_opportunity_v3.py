@@ -54,7 +54,7 @@ class OpportunityCausality(unittest.TestCase):
         self.assertTrue(raw.dropna().empty)
         records=self.ds.instruments.set_index('instrument_id',drop=False).copy();records['sector']='UNKNOWN'
         ret=pd.DataFrame({c:p.close.pct_change() for c,p in self.ds.panels.items()}).dropna().tail(60)
-        w,status=allocate(ret,records,pd.DataFrame(1.,index=['UNKNOWN'],columns=ret.columns),CONFIG)
+        w,status=allocate(ret,records,pd.DataFrame(1.,index=['UNKNOWN'],columns=ret.columns),CONFIG,expected=pd.Series(.1,index=ret.columns))
         self.assertEqual(status,'industry_coverage_insufficient')
 
     def test_shared_downside_returns_form_one_capped_group(self):

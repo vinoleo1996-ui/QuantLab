@@ -1,4 +1,4 @@
-> 历史研究笔记，未逐项重新核验。当前机制采用状态及2026增星排名证据以[GITHUB_2026_RANKING_AND_MECHANISMS.md](GITHUB_2026_RANKING_AND_MECHANISMS.md)为准；本文件不能证明策略收益。
+> 历史研究笔记，未逐项重新核验。当前机制采用状态及2026增星排名证据以[GITHUB_2026_RANKING_AND_MECHANISMS.md](archive/GITHUB_2026_RANKING_AND_MECHANISMS.md)为准；本文件不能证明策略收益。
 
 # 调研笔记：高星项目吸收 + 2026 前沿论文
 

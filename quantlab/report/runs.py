@@ -38,7 +38,11 @@ def provenance():
 
 def finalize_run_identity(result):
     prov = provenance()
-    digest = hashlib.sha256(json.dumps(prov["code_sha256"], sort_keys=True).encode()).hexdigest()[:12]
+    # A commit leaves file bytes unchanged, but must not reuse an artifact whose
+    # recorded provenance belongs to the earlier dirty working tree.
+    identity = {key: prov.get(key) for key in
+                ("code_sha256", "git_commit", "git_dirty", "dependency_lock_sha256")}
+    digest = fingerprint(identity)[:12]
     if result.get("code_version") is None:
         result["run_id"] += "-" + digest
         result["code_version"] = digest

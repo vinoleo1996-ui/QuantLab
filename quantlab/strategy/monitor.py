@@ -4,7 +4,7 @@ import json
 from quantlab.config import OUTPUT_DIR
 
 
-def daily_expert_pulse(limit=100, manifest=None, strategy="repaired_legacy", forecasts=None):
+def daily_expert_pulse(limit=100, manifest=None, strategy="opportunity", forecasts=None):
     from quantlab.cli import run_backtest, signal_payload
     result = run_backtest(save=False, manifest=manifest, strategy=strategy, forecasts=forecasts)
     from quantlab.report.runs import persist_run,atomic_json

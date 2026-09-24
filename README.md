@@ -2,7 +2,7 @@
 
 A股与境内股票ETF的可追溯研究及模拟账户系统。60万元、只做多、允许现金、不加杠杆；每周评估机会、每日检查风险。**当前无合格真实数据上的新策略业绩，正式运行返回 `blocked_data`。**
 
-本轮实现状态见 [实施记录](docs/IMPLEMENTATION_V3_2026-09-24.md)、[36项审查裁定](docs/REVIEW_R4_ADJUDICATION_2026-09-24.md)、[数据契约](docs/DATASET_CONTRACT.md)。
+当前开发以[实施状态及后续顺序](docs/IMPLEMENTATION_V3_2026-09-24.md)、[策略规范](docs/STRATEGY.md)和[数据契约](docs/DATASET_CONTRACT.md)为准。旧审查和研究材料归档于docs/archive，不再维护多份现行方案。
 
 ## 环境与验证
 
@@ -40,7 +40,7 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 替换占位路径后使用。回测、信号和监控共用评分、预测及账本；所有输出有版本与状态。方向来自待执行订单，行情未知、跌停或现金不足仍可能不成交。信号始终标记simulation和 `executable=false`。
 
-`repaired_legacy`是修复旧策略对照；`opportunity`是预期收益驱动的新模型，二者不混称同一算法。`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。新模型允许现金，行业未知股票拒绝配权。
+默认且唯一主动策略为`opportunity`。没有合格数据或冻结预测则阻断；旧`repaired_legacy`入口及最小方差回退已移除。`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。新模型允许现金，行业未知股票拒绝配权。
 
 ## 持久前向模拟
 
@@ -51,7 +51,7 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 .venv2/bin/python -m quantlab.cli forward-recover --book output/paper.sqlite3 --model-version MODEL_HASH --manifest PATH --forecasts RUN/forecasts.json
 ```
 
-模型、投资约束和代码版本固定；断档须显式恢复，恢复记录带重建标记。成交核对尚不等于券商账户资金与权益完整对账。开发日志、历史补跑和合成夹具都不计入六个月冻结验证。不创建自动实盘交易或定时作业。
+当前开发优先级仅为P1数据验收，前向工具待数据/研究验收后使用。模型、投资约束和代码版本固定；断档须显式恢复，恢复记录带重建标记。成交核对尚不等于券商账户资金与权益完整对账。开发日志、历史补跑和合成夹具都不计入六个月冻结验证。不创建自动实盘交易或定时作业。
 
 ## 公开行情和看板
 
@@ -61,6 +61,6 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 ## 参考项目与收益边界
 
-[2026 GitHub排名证据与机制研究](docs/GITHUB_2026_RANKING_AND_MECHANISMS.md)区分原十项目参考清单、2026新建候选表和仍未证实的全年增星TOP10。新增源码机制研究包括NautilusTrader、AKQuant、QuantDinger和OpenAlice；不以热度或代理角色数量选择策略。
+[2026 GitHub排名证据与机制研究](docs/archive/GITHUB_2026_RANKING_AND_MECHANISMS.md)区分原十项目参考清单、2026新建候选表和仍未证实的全年增星TOP10。新增源码机制研究包括NautilusTrader、AKQuant、QuantDinger和OpenAlice；不以热度或代理角色数量选择策略。
 
 最大回撤20%是研究目标。停牌、跌停和跳空可使实际损失超过目标。没有8%—12%、15%—20%或其他已证明的实盘年化预期。

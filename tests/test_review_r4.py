@@ -21,12 +21,35 @@ class DeliveryContracts(unittest.TestCase):
             self.assertEqual(q.loc['600000','source'],'sina')
             self.assertEqual(q.loc['000001','time'],'tencent-time')
 
-    def test_legacy_control_respects_reduced_risk_budget(self):
+    def test_opportunity_respects_reduced_risk_budget(self):
         from quantlab.strategy.allocation import allocate
         ds=dataset(days=100);records=ds.instruments.set_index('instrument_id')
         r=pd.DataFrame({c:p.close.pct_change() for c,p in ds.panels.items()}).dropna()
-        w,status=allocate(r,records,pd.get_dummies(records.sector,dtype=float).T,CONFIG,gross=.3,vol_scale=.75)
+        w,status=allocate(r,records,pd.get_dummies(records.sector,dtype=float).T,CONFIG,gross=.3,vol_scale=.75,expected=pd.Series(.2,index=r.columns))
         self.assertEqual(status,'ok');self.assertLessEqual(w.sum(),.300001)
+
+    def test_no_forecast_cannot_fall_back_to_minimum_variance(self):
+        from quantlab.strategy.allocation import allocate
+        ds=dataset(days=100);records=ds.instruments.set_index('instrument_id')
+        r=pd.DataFrame({c:p.close.pct_change() for c,p in ds.panels.items()}).dropna()
+        w,status=allocate(r,records,pd.get_dummies(records.sector,dtype=float).T,CONFIG)
+        self.assertEqual(status,'forecast_required');self.assertEqual(w.sum(),0.)
+
+    def test_default_engine_is_opportunity_and_blocks_without_forecasts(self):
+        from quantlab.backtest.engine import Engine
+        result=Engine().run(dataset())
+        self.assertEqual(result['status'],'blocked_data')
+        self.assertIn('frozen_forecasts_required',result['reasons'])
+
+    def test_empty_forecast_schedule_cannot_publish_zero_performance(self):
+        from quantlab.backtest.engine import Engine
+        result=Engine().run(dataset(),forecasts={})
+        self.assertFalse(result['run_health']['research_interpretable'])
+
+    def test_data_hash_includes_schema(self):
+        from quantlab.data.contracts import frame_hash
+        p=pd.DataFrame({'open':[10.,11.],'close':[11.,12.]})
+        self.assertNotEqual(frame_hash(p),frame_hash(p.rename(columns={'open':'close','close':'open'})))
 
     def test_synthetic_dataset_is_not_qualified_data(self):
         from quantlab.data.qualification import qualification
@@ -54,6 +77,23 @@ class DeliveryContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'run_identity_collision'):persist_run(changed,Path(tmp))
             (folder/'result.pkl').write_bytes(b'untrusted')
             with self.assertRaisesRegex(ValueError,'artifact_checksum'):load_run(folder)
+
+    def test_frozen_run_does_not_reuse_dirty_provenance(self):
+        from unittest.mock import patch
+        from quantlab.backtest.engine import blocked_result
+        from quantlab.report.runs import persist_run
+        base=dict(code_sha256={'engine.py':'same-source'},python='3.12',packages={},
+                  dependency_lock_sha256='same-lock',git_commit='parent',git_dirty=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch('quantlab.report.runs.provenance',return_value=base):
+                dirty=persist_run(blocked_result(['fixture']),Path(tmp))
+            frozen=dict(base,git_commit='frozen',git_dirty=False)
+            with patch('quantlab.report.runs.provenance',return_value=frozen):
+                clean=persist_run(blocked_result(['fixture']),Path(tmp))
+                repeated=persist_run(blocked_result(['fixture']),Path(tmp))
+            self.assertNotEqual(dirty,clean)
+            self.assertEqual(clean,repeated)
+            self.assertFalse(json.loads((clean/'provenance.json').read_text())['git_dirty'])
 
     def test_mandate_identity_ignores_data_cache_location(self):
         from quantlab.mandate import Mandate

@@ -110,11 +110,11 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
     (out/'forecasts.json').write_text(json.dumps(dict(data_version=ds.version,forecasts=serial),default=str,indent=2))
     start,end=folds[0]['test'][0],folds[-1]['test'][-1]
     observed=engine.run(ds,strategy='opportunity',forecasts=all_forecasts,start=start,end=end,prepared=prepared)
-    controls={name:engine.run(ds,strategy=name,start=start,end=end,prepared=prepared) for name in ('buy_hold','monthly_equal','vol_matched_equal','repaired_legacy')}
+    controls={name:engine.run(ds,strategy=name,start=start,end=end,prepared=prepared) for name in ('buy_hold','monthly_equal','vol_matched_equal')}
     for run in [observed,*controls.values()]:persist_run(run,root=out/'runs')
     paired=compare_returns(observed['daily_return'],controls['vol_matched_equal']['daily_return'])
     paired.to_csv(out/'paired_oos_excess.csv')
-    random=[];rng=np.random.default_rng(protocol['seed']);healthy=usable(observed)
+    random=[];rng=np.random.default_rng(protocol['seed']);healthy=usable(observed) and all(usable(run) for run in controls.values())
     for i in range(protocol['random_trials']):
         order=list(rng.permutation(sorted(ds.panels)))
         randomized={}
@@ -134,7 +134,7 @@ def run_suite(ds,root,protocol=None,cfg=None,allow_test_fixture=False):
     for name in protocol.get('diagnostics',[]):
         trial=registry.register('opportunity-module',{'diagnostic':name},ds.version,'diagnostic','opportunity-v1')
         dc=deepcopy(cfg);forecasts=all_forecasts;kwargs={}
-        if name=='without_opportunity':kwargs['strategy']='repaired_legacy'
+        if name=='without_opportunity':kwargs['strategy']='vol_matched_equal'
         if name=='without_crowding':kwargs['crowding']=False
         if name=='without_buffer':
             dc.capital.min_holding_period_days=0;dc.research.entry_percentile=0.;dc.research.exit_reviews=1;dc.research.exit_percentile=1.

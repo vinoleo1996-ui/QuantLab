@@ -96,6 +96,7 @@ class ForwardBook:
             state=pickle.dumps(run['_runtime']);orders=[o for o in run['orders'] if o['status'] in ('pending','partial')]
             payload=dict(as_of=str(d.date()),recorded_at=str(now),model_version=self.model_version,data_version=ds.version,
                 mandate_version=self.mandate.version,status='fixture_test_only' if allow_test_fixture else run['status'],
+                run_health=run['run_health'],
                 account=run['account'][-1],pending_orders=orders,run_id=run['run_id'],fills=run['fills'],
                 request_hash=self._request_hash(ds,forecast),
                 history_hashes=self._history(ds,d),recovered_session=session is not None,

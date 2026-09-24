@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Conditional random-basket diagnostic on frozen legacy caches. Never a live/PIT result."""
+"""Qualified-data random research entry. cached_proxy is an archived forensic helper only."""
 import argparse
 from copy import deepcopy
 from dataclasses import asdict
@@ -16,8 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from quantlab.config import CONFIG, OUTPUT_DIR
 from quantlab.data.store import DataStore
 from quantlab.data.contracts import MarketDataset, fingerprint
-from quantlab.backtest.engine import Engine, prepare
-from quantlab.report.metrics import performance_table
 from quantlab.report.runs import provenance
 
 
@@ -60,90 +58,28 @@ def cached_proxy():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--trials", type=int, default=200)
-    parser.add_argument("--seed", type=int, default=20260924)
-    args = parser.parse_args()
-    if args.trials < 200: raise ValueError("at least 200 trials required")
-    out = OUTPUT_DIR / "random_basket_20260924"
-    out.mkdir(exist_ok=True)
-    ds = cached_proxy()
-    cfg = deepcopy(CONFIG)
-    cfg.capital.rebalance_rule = "monthly"
-    cfg.capital.a_share_positions = 27
-    cfg.capital.target_positions = 30
-    cfg.portfolio.max_sector_weight = .30
-    cfg.research.max_stock_weight = 1/27+.015
-    cfg.research.universe_mode = "pit_liquidity"
-    cfg.factors.use_experts = True
-    cfg.seed = args.seed
-    contract = {"null": "repaired selection no better than fixed random priority basket under same allocator and risk policy",
-                "trials": args.trials, "seed": args.seed, "basket_size": 27, "nominal_pool_size": len(ds.panels),
-                "primary_metric": "calendar_cagr", "exploratory_percentile": .90,
-                "one_sided_mc_p": "(1 + count(null >= observed)) / (1 + trials)",
-                "gate": "cannot promote on diagnostic data; p>0.10 means this model has not beaten conditional random selection",
-                "does_not_test": "absence of all possible alpha or superiority of another universe",
-                "assumptions": ["survivor snapshot pool", "adjusted prices normalized to counterfactual units; not real share lots",
-                                "opening tradability approximated; no PIT corporate actions", "same prior ADV eligibility for both arms",
-                                "same minimum variance allocator, commissions, slippage and frozen monthly risk policy",
-                                "actual eligible pool/count may be below 40/27 due missing liquidity", "retrospective exploratory test"],
-                "config": asdict(cfg), "dataset": ds.manifest, "data_version": ds.version,
-                "provenance": provenance()}
-    target = out / "preregistered_contract.json"
-    if target.exists():
-        prior = json.loads(target.read_text())
-        # Preserve every changed pre-run specification in a new file; do not overwrite an old hypothesis.
-        if fingerprint(prior) != fingerprint(json.loads(json.dumps(contract, default=str))):
-            target = out / ("preregistered_contract_" + fingerprint(contract)[:12] + ".json")
-    if not target.exists(): target.write_text(json.dumps(contract, default=str, ensure_ascii=False, indent=2))
-    print("contract saved before evaluating:", target, flush=True)
-    p = prepare(ds, cfg)
-    print("prepared", len(p["close"]), "sessions", flush=True)
-    # Restrict random choices to the same factor-valid/crowding-filtered opportunity set each month.
-    eligible = {}
-    decisions = {}
-    for d in p["close"].index:
-        dec = p["service"].score(d, p["eligible"][d]) if d in p["service"].months else None
-        if dec is not None and dec.status == "ok": decisions[d] = dec
-        eligible[d] = list(dec.scores.index) if dec is not None and dec.status == "ok" else p["eligible"][d]
-    p["eligible"] = eligible
-    p["decisions"] = decisions
-    p["review_override"] = list(decisions)
-    engine = Engine(cfg)
-    kwargs = dict(diagnostic=True, risk_mode="legacy_monthly", prepared=p)
-    observed = engine.run_dataset(ds, **kwargs)
-    metric = performance_table(observed["nav"], observed["daily_return"])
-    print("observed diagnostic", metric, flush=True)
-    (out / "observed.pkl").write_bytes(pickle.dumps(observed))
-    ds.benchmark.to_parquet(out / "benchmark_proxy.parquet")
-    rng = np.random.default_rng(args.seed)
-    trials, daily, seen = [], {}, set()
-    while len(trials)<args.trials:
-        order = list(rng.permutation(sorted(ds.panels)))
-        key = tuple(order)
-        if key in seen: continue
-        seen.add(key)
-        result = engine.run_dataset(ds, strategy="random", random_order=order, basket_size=27, **kwargs)
-        stats = performance_table(result["nav"], result["daily_return"])
-        trials.append(dict(trial=len(trials), order=order, **stats, fills=len(result["fills"]), status=result["status"]))
-        daily[str(len(trials))] = result["daily_return"]
-        if len(trials)%10 == 0:
-            print("completed", len(trials), flush=True)
-            (out / "trials.partial.json").write_text(json.dumps(trials, indent=2))
-    null = np.array([x["annual_return"] for x in trials])
-    obs = metric["annual_return"]
-    verdict = {"status": "diagnostic_only", "promotion_approved": False, "observed": metric,
-               "trials": len(trials), "percentile": float(np.mean(null<obs)),
-               "mc_p_upper": float((1+(null>=obs).sum())/(len(null)+1)),
-               "null_quantiles": {str(q): float(np.quantile(null,q)) for q in (.1,.5,.9,.95)},
-               "model_beats_random_at_10pct": bool(obs>np.quantile(null,.9)),
-               "next_stage": "blocked_pending_PIT_and_predeclared_OOS_evidence",
-               "interpretation": "conditional test of this model only; no claim that the pool lacks alpha",
-               "contract": str(target), "actual_eligible_counts": pd.Series([len(x) for x in eligible.values()]).describe().to_dict()}
-    (out / "summary.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2))
-    (out / "trials.json").write_text(json.dumps(trials, indent=2))
-    pd.DataFrame(daily).to_parquet(out / "null_daily_returns.parquet")
-    print(json.dumps(verdict, ensure_ascii=False, indent=2), flush=True)
+    """Current entry requires qualified data; legacy proxy results remain archived."""
+    from quantlab.data.qualification import audit_manifest
+    from quantlab.data.contracts import load_dataset
+    from quantlab.pipeline import run_suite,DEFAULT_PROTOCOL
+    from quantlab.report.runs import atomic_json
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--manifest',default='data/research/manifest.json')
+    parser.add_argument('--trials',type=int,default=1000)
+    parser.add_argument('--seed',type=int,default=20260924)
+    parser.add_argument('--output',default='output/random_basket_v3')
+    args=parser.parse_args()
+    report=audit_manifest(args.manifest)
+    if report['status']!='qualified_for_daily_research':
+        verdict=dict(status='blocked_data',observed=None,percentile=None,mc_p_upper=None,
+            model_beats_random_at_10pct=None,trials=0,next_stage='qualified_PIT_dataset_required',
+            reasons=report['reasons'],promotion_approved=False,data_version=report.get('data_version'),
+            model_version=None,as_of=None)
+        verdict['run_id']=fingerprint(dict(report=report,code=provenance()['code_sha256']))[:24]
+        atomic_json(Path(args.output)/verdict['run_id']/'summary.json',verdict)
+        print(json.dumps(verdict,ensure_ascii=False,indent=2));return
+    protocol=deepcopy(DEFAULT_PROTOCOL);protocol.update(random_trials=args.trials,seed=args.seed)
+    print(json.dumps(run_suite(load_dataset(args.manifest),args.output,protocol),default=str,ensure_ascii=False,indent=2))
 
 
-if __name__ == "__main__": main()
+if __name__=='__main__':main()

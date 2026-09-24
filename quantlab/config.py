@@ -149,7 +149,7 @@ class RiskConfig:
 
 @dataclass
 class ResearchConfig:
-    model_version: str = "repaired-legacy-ledger-v2"
+    model_version: str = "opportunity-ledger-v3"
     horizon: int = 20
     train_months: int = 36
     validation_months: int = 6

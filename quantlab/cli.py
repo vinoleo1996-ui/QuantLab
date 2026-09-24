@@ -27,7 +27,7 @@ def build_panels(source: str, market: str, limit: int | None = None):
     return panels, cand, feed.fetch_benchmark(market)
 
 
-def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="repaired_legacy", forecasts=None):
+def run_backtest(source="auto", market="a", save=True, manifest=None, strategy="opportunity", forecasts=None):
     from quantlab.backtest.engine import Engine, blocked_result
     from quantlab.data.contracts import load_dataset, DataContractError
     from quantlab.report.runs import persist_run, finalize_run_identity
@@ -63,7 +63,7 @@ def cmd_fetch(args):
 def cmd_backtest(args):
     from quantlab.report.html import build_html_report
     result = run_backtest(args.source, args.market, manifest=getattr(args, "manifest", None),
-                          strategy=getattr(args, "strategy", "repaired_legacy"), forecasts=getattr(args,"forecasts",None))
+                          strategy=getattr(args, "strategy", "opportunity"), forecasts=getattr(args,"forecasts",None))
     folder = Path(result["artifact_directory"])
     report = build_html_report(result, title="QuantLab 研究验证报告", out=folder / "report.html")
     _print_perf(result)
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> None:
         sp.add_argument("--symbols", default="")
         sp.add_argument("--limit", type=int, default=25)
         sp.add_argument("--manifest", default=None, help="经过哈希校验的研究数据集清单")
-        sp.add_argument("--strategy", default="repaired_legacy", choices=["repaired_legacy", "buy_hold", "monthly_equal", "vol_matched_equal", "opportunity"])
+        sp.add_argument("--strategy", default="opportunity", choices=["opportunity", "buy_hold", "monthly_equal", "vol_matched_equal"])
         sp.add_argument("--forecasts",default=None,help="研究流水线冻结的预测文件")
         sp.add_argument("--reset-cache", action="store_true", help="强制重拉全部历史(绕过本地缓存)")
     audit=sub.add_parser('data-audit');audit.add_argument('--manifest',default='data/research/manifest.json')

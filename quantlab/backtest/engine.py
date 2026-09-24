@@ -16,7 +16,7 @@ from quantlab.data.market import panels_for_research, universe_at, exposure_matr
 from quantlab.backtest.ledger import Ledger, trade_permission
 from quantlab.strategy.crowding import exit_risk
 from quantlab.mandate import Mandate
-from quantlab.strategy.decision import FactorDecisionService, review_dates
+from quantlab.strategy.decision import review_dates
 from quantlab.strategy.allocation import allocate
 from quantlab.strategy.risk import RiskManager, Regime
 
@@ -47,13 +47,12 @@ def blocked_result(reasons, market="a"):
             "drawdown": pd.Series(dtype=float), "trades": [], "weight_history": [],
             "ic_matrix": pd.DataFrame(), "factor_panels": {}, "codes": [], "market": market,
             "status": "blocked_data", "reasons": reasons, "metrics": None,
-            "promotion_approved": False, "model_version": "ledger-v2", "data_version": None,
+            "promotion_approved": False, "model_version": "opportunity-unconfigured", "data_version": None,
             "as_of": None, "run_id": fingerprint(reasons)[:20], "orders": [], "fills": []}
 
 
 def prepare(dataset, cfg):
     close, amount, turnover = panels_for_research(dataset)
-    service = FactorDecisionService(close, amount, turnover, dataset.calendar, cfg)
     # Capture raw and processed inputs in every persisted run, including the exact benchmark.
     records, rules, exposures, eligible, close_records = {}, {}, {}, {}, {}
     for d in close.index:
@@ -67,7 +66,7 @@ def prepare(dataset, cfg):
                                        as_of=timestamp(d) + pd.Timedelta(hours=9, minutes=25))
         eligible[d], close_records[d] = universe_at(dataset, d, amount, cfg)
     return {"close": close, "amount": amount, "turnover": turnover,
-            "service": service, "version": dataset.version, "preparation_config": fingerprint(asdict(cfg)), "records": records, "rules": rules,
+            "version": dataset.version, "preparation_config": fingerprint(asdict(cfg)), "records": records, "rules": rules,
             "exposures": exposures, "eligible": eligible, "close_records": close_records,
             "bars": {d: {c: row.to_dict() for c, panel in dataset.panels.items()
                          if d in panel.index for _, row in panel.loc[[d]].iterrows()} for d in close.index}}
@@ -83,7 +82,7 @@ class Engine:
         return blocked_result(["versioned_dataset_manifest_required", "raw_prices_and_corporate_actions_unverified",
                                "historical_universe_and_exchange_calendar_unverified"], self.market)
 
-    def run_dataset(self, dataset, *, strategy="repaired_legacy", random_order=None, basket_size=27,
+    def run_dataset(self, dataset, *, strategy="opportunity",
                     diagnostic=False, risk_mode="daily", prepared=None, target_schedule=None,
                     start=None, end=None, cost_mult=1.0, liquidity_mult=1.0, blocked_sessions=(),
                     execution_delay=0, forecasts=None, review_override=None, crowding=True, initial_state=None):
@@ -99,14 +98,14 @@ class Engine:
         validate_config(cfg)
         if cfg.research.enable_announcements:
             return blocked_result(["announcement_module_requires_PIT_and_incremental_evidence"])
-        if strategy not in ("repaired_legacy", "random", "buy_hold", "monthly_equal", "vol_matched_equal", "schedule", "opportunity"):
+        if strategy not in ("buy_hold", "monthly_equal", "vol_matched_equal", "schedule", "opportunity"):
             raise ValueError("unknown_or_unpromoted_strategy")
         if strategy == "opportunity" and forecasts is None: return blocked_result(["frozen_forecasts_required"])
         if strategy == "schedule" and target_schedule is None: raise ValueError("target schedule required")
         p = prepared or prepare(dataset, cfg)
         if p["version"] != dataset.version or p.get("preparation_config") != fingerprint(asdict(cfg)):
             raise ValueError("prepared_context_version_mismatch")
-        close, amount, svc = p["close"], p["amount"], p["service"]
+        close, amount = p["close"], p["amount"]
         start = pd.Timestamp(start or cfg.start_date)
         end = pd.Timestamp(end or close.index[-1])
         dates = close.index[(close.index >= start) & (close.index <= end)]
@@ -116,10 +115,6 @@ class Engine:
         if review_override is not None: reviews = set(review_override)
         if "review_override" in p: reviews &= set(p["review_override"])
         if strategy in ("buy_hold", "monthly_equal", "vol_matched_equal") and len(dates): reviews.add(dates[0])
-        if strategy == "repaired_legacy" and "review_override" not in p:
-            first = next((d for d in dates if d in reviews and svc.score(d,p["eligible"][d]).status == "ok"), None)
-            if first is None: return blocked_result(["insufficient_factor_history_or_eligible_universe"])
-            dates = dates[dates>=first]
         account = Ledger(cfg.capital.init_cash, cfg.cost.a_slippage, cfg.research.cash_buffer,
                          cfg.research.participation, cost_mult, cfg.cost.min_trade_value)
         risk = RiskManager(cfg.risk, cfg.research, cfg.portfolio.target_vol) if risk_mode == "daily" else LegacyMonthlyRisk(cfg)
@@ -136,7 +131,7 @@ class Engine:
             if account.snapshots and dates[0]<=account.snapshots[-1]['date']:raise ValueError('forward_session_not_new')
         config_dump = asdict(cfg)
         run_id = fingerprint({"data": p["version"], "config": config_dump, "strategy": strategy,
-                              "order": random_order, "start": str(start), "end": str(end), "risk": risk_mode,
+                              "start": str(start), "end": str(end), "risk": risk_mode,
                               "cost": cost_mult, "liquidity": liquidity_mult, "blocked": list(blocked_sessions),
                               "delay": execution_delay, "schedule": target_schedule,
                               "forecasts": {str(d):dict(model=f.model_version,training=f.training_cutoff,mu=f.expected_returns.to_dict()) for d,f in (forecasts or {}).items()},
@@ -277,66 +272,23 @@ class Engine:
                 trace=dict(forecast.trace,predictions=mu.to_dict(),training_cutoff=forecast.training_cutoff,
                            forecast_model_version=forecast.model_version,groups=rs.groups if rs else {},
                            risk_proxy_reasons=rs.reasons if rs else [],locked=locked)
-            elif d in reviews and not (strategy == "buy_hold" and invested):
-                selected = []
-                if strategy == "repaired_legacy":
-                    decision = p.get("decisions", {}).get(d) or svc.score(d, eligible)
-                    trace = decision.trace
-                    if decision.status != "ok":
-                        traces.append({"date": str(d), "status": decision.status, "reasons": decision.reasons})
-                        continue
-                    ranks = decision.scores.rank(pct=True)
-                    if cfg.capital.rebalance_rule == "monthly":
-                        selected = decision.scores.sort_values(ascending=False, kind="stable").index[:cfg.capital.a_share_positions].tolist()
-                    else:
-                        for c in account.quantities():
-                            outside_count[c] = outside_count.get(c, 0)+1 if ranks.get(c, 0) < cfg.research.exit_percentile else 0
-                        kept = [c for c in account.quantities() if c in eligible and
-                                (account.holding_age(c, session)<cfg.capital.min_holding_period_days or outside_count.get(c, 0)<cfg.research.exit_reviews)]
-                        new = ranks[ranks >= cfg.research.entry_percentile].sort_values(ascending=False).index
-                        selected = list(dict.fromkeys(kept + list(new)))[:cfg.capital.a_share_positions]
-                elif strategy == "random":
-                    selected = [c for c in random_order if c in eligible][:basket_size]
-                else:
-                    selected = eligible
-                # Retain held names younger than the ordinary minimum holding interval.
-                if strategy in ("repaired_legacy", "random"):
-                    young = [c for c in account.quantities() if account.holding_age(c, session)<cfg.capital.min_holding_period_days]
-                    selected = list(dict.fromkeys(young + selected))[:cfg.capital.a_share_positions]
-                selected = [c for c in selected if c in rules and c in close]
-                if not selected: continue
-                exposures = exposure_matrix(dataset, d, records, selected)
-                ret = close.loc[:d, selected].pct_change(fill_method=None).tail(cfg.portfolio.vol_est_window)
-                if strategy in ("buy_hold", "monthly_equal", "vol_matched_equal"):
-                    target = {c: min((1-cfg.research.cash_buffer)/len(selected), cfg.research.max_stock_weight) for c in selected}
-                    x = pd.Series(target)
-                    se = exposures @ x
-                    if se.max() > cfg.portfolio.max_sector_weight: x *= cfg.portfolio.max_sector_weight / se.max()
-                    if strategy == "vol_matched_equal":
-                        clean = ret.dropna()
-                        if len(clean)<40: continue
-                        vol = float((clean @ x).std()*np.sqrt(252))
-                        x *= min(1., cfg.portfolio.target_vol*last_risk["vol_scale"]/max(vol, 1e-12))
-                    x *= min(1., last_risk["gross_scale"]/max(x.sum(), 1e-12))
-                    target, status = x.to_dict(), "ok"
-                else:
-                    x, status = allocate(ret, records, exposures, cfg, last_risk["gross_scale"], last_risk["vol_scale"], industry_policy="disabled_diagnostic" if diagnostic and cfg.portfolio.max_sector_weight==1 else "verified")
-                    target = x.to_dict()
-                if status != "ok":
-                    allocation_issues.append({"date": str(d), "reason": status})
-                    account.cancel_buys(status)
-                    continue
-                if not last_risk.get("allow_new_stock", True):
-                    target = {c: min(w, account.weights().get(c, 0.)) for c, w in target.items()}
-                if strategy in ("repaired_legacy", "random"):
-                    now_w = account.weights()
-                    locked = {c: now_w[c] for c in now_w if account.holding_age(c, session)<cfg.capital.min_holding_period_days}
-                    for c, w in locked.items(): target[c] = max(target.get(c, 0.), w)
-                    free = {c: w for c,w in target.items() if c not in locked}
-                    budget = max(0., min(1-cfg.research.cash_buffer,last_risk["gross_scale"]) - sum(target[c] for c in locked))
-                    scale = min(1., budget/max(sum(free.values()),1e-12))
-                    for c in free: target[c] *= scale
-                reason = strategy
+            elif strategy in ("buy_hold", "monthly_equal", "vol_matched_equal") and d in reviews and not (strategy == "buy_hold" and invested):
+                selected=[c for c in eligible if c in rules and c in close]
+                if not selected:continue
+                exposures=exposure_matrix(dataset,d,records,selected)
+                x=pd.Series({c:min((1-cfg.research.cash_buffer)/len(selected),
+                    cfg.research.max_etf_weight if rules[c].asset_type=='equity_etf' else cfg.research.max_stock_weight) for c in selected})
+                sector=exposures@x
+                if sector.max()>cfg.portfolio.max_sector_weight:x*=cfg.portfolio.max_sector_weight/sector.max()
+                if strategy=='vol_matched_equal':
+                    returns=close.loc[:d,selected].pct_change(fill_method=None).tail(cfg.portfolio.vol_est_window).dropna()
+                    if len(returns)<40:continue
+                    vol=float((returns@x).std()*np.sqrt(252))
+                    x*=min(1.,cfg.portfolio.target_vol*last_risk['vol_scale']/max(vol,1e-12))
+                x*=min(1.,last_risk['gross_scale']/max(x.sum(),1e-12))
+                if not last_risk.get('allow_new_stock',True):
+                    x=pd.Series({c:min(w,account.weights().get(c,0.)) for c,w in x.items()})
+                target,reason=x.to_dict(),strategy
             if target is not None:
                 next_dates = dataset.calendar[dataset.calendar > d]
                 exec_date = next_dates[execution_delay] if len(next_dates)>execution_delay else None
@@ -357,10 +309,10 @@ class Engine:
         status = "diagnostic_proxy" if diagnostic else "research_unvalidated"
         if account.data_issues: status = "unverified_data_gaps"
         model_versions=sorted({f.model_version for f in (forecasts or {}).values()})
-        reported_model=(model_versions[0] if len(model_versions)==1 else 'schedule-'+fingerprint(model_versions)[:20]) if strategy=='opportunity' else cfg.research.model_version
+        reported_model=(model_versions[0] if len(model_versions)==1 else 'schedule-'+fingerprint(model_versions)[:20]) if strategy=='opportunity' else "baseline-"+strategy
         result = {"nav": nav, "daily_return": ret, "drawdown": dd, "trades": decisions,
                   "weight_history": [pd.Series(x["weights"], name=x["date"], dtype=float) for x in account.snapshots],
-                  "factor_panels": {k:v.loc[:end] for k,v in svc.factors.items()}, "ic_matrix": svc.ic.loc[:end], "codes": list(close), "market": self.market,
+                  "factor_panels": {}, "ic_matrix": pd.DataFrame(), "codes": list(close), "market": self.market,
                   "run_id": run_id, "data_version": p["version"], "model_version": reported_model,
                   "as_of": str(end), "status": status, "reasons": errors, "promotion_approved": False,
                   "mandate_version": mandate.version if mandate else "diagnostic_unrestricted",
@@ -371,9 +323,10 @@ class Engine:
                   "input_actions": dataset.actions, "calendar": dataset.calendar, **account.export()}
         result['_runtime']=dict(ledger=account,risk=risk,last_risk=last_risk,delayed=delayed,outside_count=outside_count,
                                 invested=invested,mandate_version=mandate.version if mandate else None)
-        result['run_health']=dict(allocation_failures=len(allocation_issues),decision_count=len(decisions),
+        forecast_failures=sum(t.get('status')=='invalid' for t in traces)
+        result['run_health']=dict(allocation_failures=len(allocation_issues),decision_count=len(decisions),forecast_failures=forecast_failures,
             data_issue_count=len(account.data_issues),mean_cash_weight=float(np.mean([a['cash']/a['nav'] for a in account.snapshots])),
-            research_interpretable=not allocation_issues and not account.data_issues)
+            research_interpretable=not allocation_issues and not account.data_issues and not forecast_failures)
         return result
 
 

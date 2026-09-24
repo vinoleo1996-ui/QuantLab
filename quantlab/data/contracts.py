@@ -32,7 +32,9 @@ def fingerprint(value) -> str:
 
 
 def frame_hash(frame: pd.DataFrame) -> str:
-    return hashlib.sha256(pd.util.hash_pandas_object(frame, index=True).values.tobytes()).hexdigest()
+    values=hashlib.sha256(pd.util.hash_pandas_object(frame,index=True).values.tobytes()).hexdigest()
+    return fingerprint(dict(columns=list(frame.columns),dtypes=[str(t) for t in frame.dtypes],
+                            index_names=list(frame.index.names),index_dtype=str(frame.index.dtype),values=values))
 
 
 def asof_records(history: pd.DataFrame, as_of, effective=None) -> pd.DataFrame:
