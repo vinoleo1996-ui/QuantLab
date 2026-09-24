@@ -138,7 +138,10 @@ def _distributions(code,cache,calendar,end):
             bonus=sum(float(row.get(k)) if pd.notna(row.get(k)) else 0. for k in ('dividStocksPs','dividReserveToStockPs'))
             needed=['dividRegistDate','dividPlanDate']+(['dividPayDate'] if cash else [])+(['dividStockMarketDate'] if bonus else [])
             if any(pd.isna(row.get(k)) for k in needed):
-                issues.append(dict(instrument_id=code,date=str(ex),reason='incomplete_distribution_dates'));continue
+                issues.append(dict(instrument_id=code,date=str(ex),reason='incomplete_distribution_dates',
+                    cash_per_share_reported=cash,share_ratio_reported=bonus,
+                    record_date=row.get('dividRegistDate') if pd.notna(row.get('dividRegistDate')) else None,
+                    source='baostock_dividend',revision=meta['sha256']));continue
             announced=pd.Timestamp(row.dividPlanDate);following=calendar[calendar>announced]
             if not len(following):continue
             actions.append(dict(action_id=code+':'+str(ex),instrument_id=code,record_date=row.dividRegistDate,
@@ -147,6 +150,58 @@ def _distributions(code,cache,calendar,end):
                 source='baostock_dividend',revision=meta['sha256'],quality_status='ok',tax_policy='gross_cn_individual',
                 action_type='distribution',ingested_at=meta.get('fetched_at'),availability_basis='reported_plan_date_next_session'))
     return actions,issues
+
+
+def _action_gap_inputs(roots,start,end):
+    """Bind known unresolved events even when their price difference is tiny."""
+    sources=[];by_code=defaultdict(list);seen=set()
+    for root in map(Path,roots):
+        path=(root/'action_gaps.json').resolve()
+        if path in seen or not path.exists():continue
+        seen.add(path);raw=path.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+        sidecar=path.with_suffix('.meta.json')
+        if sidecar.exists() and json.loads(sidecar.read_text()).get('sha256')!=digest:
+            raise ValueError('action_gap_checksum_mismatch:'+str(path))
+        rows=json.loads(raw)
+        if not isinstance(rows,list):raise ValueError('invalid_action_gap_records:'+str(path))
+        sources.append(dict(path=str(path),sha256=digest))
+        for row in rows:
+            if not isinstance(row,dict):raise ValueError('invalid_action_gap_record:'+str(path))
+            code=canonical_code(row.get('instrument_id',''));date=pd.Timestamp(row.get('date'))
+            if not _is_stock(code) or pd.isna(date) or not isinstance(row.get('reason'),str):
+                raise ValueError('invalid_action_gap_record:'+str(path))
+            for field in ('cash_per_share_reported','share_ratio_reported'):
+                value=row.get(field)
+                if value is not None and (not np.isfinite(float(value)) or float(value)<0):
+                    raise ValueError('invalid_action_gap_amount:'+str(path))
+            if start<=date<=end:
+                by_code[code].append(dict(row,instrument_id=code,date=str(date.date()),gap_source_sha256=digest))
+    return by_code,sources
+
+
+def _distribution_gap_resolved(gap,action,ambiguous_events=()):
+    """Only a matching complete entitlement resolves missing-date evidence.
+
+    A shared ex-date alone cannot identify two different report periods. Keep
+    explicit conflicts and multi-record events until they are reconciled.
+    """
+    if action is None or str(pd.Timestamp(gap['date']).date()) in ambiguous_events:return False
+    try:cash,shares=float(action['cash_per_share']),float(action['share_ratio'])
+    except (KeyError,TypeError,ValueError):return False
+    if not np.isfinite([cash,shares]).all() or min(cash,shares)<0:return False
+    required=['record_date','ex_date','available_at']
+    if cash>0:required.append('pay_date')
+    if shares>0:required.append('share_date')
+    if action.get('quality_status')!='ok' or any(pd.isna(action.get(field)) for field in required):return False
+    if gap.get('reason') not in ('incomplete_distribution_dates','distribution_payment_or_share_date_missing'):
+        return False
+    if canonical_code(gap['instrument_id'])!=action['instrument_id'] or pd.Timestamp(gap['date'])!=pd.Timestamp(action['ex_date']):
+        return False
+    for reported,actual in (('cash_per_share_reported','cash_per_share'),('share_ratio_reported','share_ratio')):
+        if gap.get(reported) is None or abs(float(gap[reported])-float(action[actual]))>1e-8:return False
+    record=gap.get('record_date')
+    if pd.notna(record) and pd.Timestamp(record)!=pd.Timestamp(action['record_date']):return False
+    return True
 
 
 def normalize_panel(code,frame,states,cache,calendar,*,qlib_hash=None):
@@ -236,6 +291,7 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
     if start>end:raise ValueError('invalid_interval')
     database=Path(database).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     cache=_cache_index(raw_cache_roots);source_hash=sha256_file(database)
+    action_gaps,gap_sources=_action_gap_inputs(raw_cache_roots,start,end)
     qroot=Path(qlib_root).resolve() if qlib_root else None
     qhash=None;qlib_manifest={}
     if qroot:
@@ -335,7 +391,13 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
                     conflicts.add(action['action_id'])
                 else:combined[action['action_id']]=action
             acts=[a for key,a in combined.items() if key not in conflicts]
-            actions.extend(acts);issues.extend(gaps)
+            complete={str(pd.Timestamp(a['ex_date']).date()):a for a in acts}
+            supplied_gaps=action_gaps.get(code,[])
+            ambiguous={g['date'] for g in supplied_gaps if g['reason'] in (
+                'multiple_distribution_records_same_day_not_reconciled','distribution_date_conflict')}
+            actions.extend(acts)
+            issues.extend(g for g in gaps if not _distribution_gap_resolved(g,complete.get(str(pd.Timestamp(g['date']).date())),ambiguous))
+            accounting_gaps.extend(g for g in supplied_gaps if not _distribution_gap_resolved(g,complete.get(g['date']),ambiguous))
             # This is a cash-accounting diagnostic, not a synthetic dividend and
             # not a reason to erase an otherwise observed adjusted price feature.
             cash=pd.Series(0.,index=p.index);shares=cash.copy()
@@ -376,6 +438,8 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
         action_frame=pd.DataFrame(actions)
         if not action_frame.empty:
             action_frame=action_frame.sort_values('available_at').drop_duplicates('action_id',keep='last')
+        for item in gap_sources:
+            if sha256_file(item['path'])!=item['sha256']:raise ValueError('action_gap_changed_during_export:'+item['path'])
         manifest=dict(source='local_market_snapshot',revision='local_adapter_v3',adapter_sha256=sha256_file(__file__),as_of=str(end.date()),
             price_basis='raw',currency='CNY',amount_unit='CNY',turnover_unit='percent',universe_coverage='historical',
             quantity_rules=dict(declaration='minimum_separate_from_increment',
@@ -392,7 +456,7 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
             data_gaps=issues,accounting_gaps=accounting_gaps,execution_assumption='daily_open_with_verified_daily_states_and_derived_rule_limits',
             research_scope=dict(scope='all_observed_historical_a_shares_no_sampling',start=str(start.date()),end=str(end.date()),
                                 current_survival_filter=False,listing_dates='verified_where_available_else_observation_lower_bound'),
-            source_files=dict(database=dict(path=str(database),sha256=source_hash),qlib=dict(root=str(qroot) if qroot else None,manifest=qlib_manifest),raw_cache=cache),
+            source_files=dict(database=dict(path=str(database),sha256=source_hash),qlib=dict(root=str(qroot) if qroot else None,manifest=qlib_manifest),raw_cache=cache,accounting_gap_sources=gap_sources),
             limitations=['Industry effective dates do not certify historical publication.',
                          'Missing ST, turnover and corporate events remain unknown.',
                          'Financial values and adjustment factors are current historical snapshots.',

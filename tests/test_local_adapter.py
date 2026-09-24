@@ -184,5 +184,43 @@ class LocalSources(unittest.TestCase):
             repeat=export_local_dataset(db,root/'snapshots',raw_cache_roots=[cache],start=dates[0],end=dates[-1])
             self.assertEqual(result['manifest'],repeat['manifest'])
 
+            # An observed unresolved distribution remains in the snapshot even
+            # when its cash amount is below the price-reference gap threshold.
+            code='sz.000001';exdates=['2024-01-05','2024-01-09','2024-01-11']
+            actions=[]
+            for ex,record in zip(exdates,['2024-01-04','2024-01-08','2024-01-10']):
+                actions.append(dict(action_id=code+':'+ex,instrument_id=code,record_date=record,ex_date=ex,
+                    pay_date=ex,share_date=ex,cash_per_share=1.,share_ratio=0.,available_at='2024-01-03 00:00:00',
+                    source='complete_second_source',revision='a1',quality_status='ok',tax_policy='gross_cn_individual',action_type='distribution'))
+            action_path=cache/'corporate_actions.csv';pd.DataFrame(actions).to_csv(action_path,index=False)
+            action_path.with_suffix('.json').write_text(json.dumps(dict(error_code='0',sha256=hashlib.sha256(action_path.read_bytes()).hexdigest())))
+            partial=cache/(code+'_dividend_2023.csv')
+            pd.DataFrame([
+                dict(dividOperateDate='2024-01-05',dividRegistDate='2024-01-04',dividPlanDate='2024-01-02',dividPayDate=None,dividCashPsBeforeTax=1.),
+                dict(dividOperateDate='2024-01-05',dividRegistDate='2024-01-03',dividPlanDate='2024-01-02',dividPayDate=None,dividCashPsBeforeTax=1.),
+                dict(dividOperateDate='2024-01-09',dividRegistDate='2024-01-08',dividPlanDate='2024-01-02',dividPayDate=None,dividCashPsBeforeTax=2.)
+            ]).to_csv(partial,index=False)
+            partial.with_suffix('.json').write_text(json.dumps(dict(error_code='0',sha256=hashlib.sha256(partial.read_bytes()).hexdigest())))
+            gaps=[
+                dict(instrument_id=code,date='2024-01-05',reason='distribution_payment_or_share_date_missing',cash_per_share_reported=1.,share_ratio_reported=0.),
+                dict(instrument_id=code,date='2024-01-09',reason='distribution_payment_or_share_date_missing',cash_per_share_reported=2.,share_ratio_reported=0.),
+                dict(instrument_id=code,date='2024-01-11',reason='multiple_distribution_records_same_day_not_reconciled',cash_per_share_reported=1.,share_ratio_reported=0.),
+                dict(instrument_id=code,date='2024-01-12',reason='distribution_payment_or_share_date_missing',cash_per_share_reported=.005,share_ratio_reported=0.)]
+            gap_path=cache/'action_gaps.json';gap_path.write_text(json.dumps(gaps))
+            gap_hash=hashlib.sha256(gap_path.read_bytes()).hexdigest()
+            gap_path.with_suffix('.meta.json').write_text(json.dumps(dict(sha256=gap_hash)))
+            with_gaps=export_local_dataset(db,root/'snapshots',raw_cache_roots=[cache],start=dates[0],end=dates[-1])
+            revised=load_dataset(with_gaps['manifest'],'free_research')
+            source=revised.manifest['source_files']['accounting_gap_sources'][0]
+            self.assertEqual(source['sha256'],gap_hash)
+            reported=[g for g in revised.manifest['accounting_gaps'] if 'gap_source_sha256' in g]
+            self.assertEqual({g['date'] for g in reported},{'2024-01-09','2024-01-11','2024-01-12'})
+            remaining=[g for g in revised.manifest['data_gaps'] if g['reason']=='incomplete_distribution_dates']
+            self.assertEqual([g['date'] for g in remaining],['2024-01-05','2024-01-09'])
+            self.assertEqual(remaining[0]['record_date'],'2024-01-03')
+            gap_path.write_text('[]')
+            with self.assertRaisesRegex(ValueError,'action_gap_checksum_mismatch'):
+                export_local_dataset(db,root/'snapshots',raw_cache_roots=[cache],start=dates[0],end=dates[-1])
+
 
 if __name__=='__main__':unittest.main()

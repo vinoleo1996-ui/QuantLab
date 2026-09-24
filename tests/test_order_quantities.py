@@ -58,4 +58,3 @@ class OrderQuantityTests(unittest.TestCase):
             ledger.queue_targets({code: shares[code]*10/20000}, '2024-01-02', 'risk_exit',
                                  {code: STAR}, target_quantities=shares)
             self.assertEqual(ledger.orders[-1].quantity, 1000-expected)
-
