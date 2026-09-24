@@ -1,7 +1,7 @@
 """Versioned research data. Unknown availability or market rules never imply permission."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -85,17 +85,46 @@ class InstrumentRules:
     commission: float
     min_commission: float
     limit_ratio: float | None
+    min_buy_quantity: int | None = None
+    min_sell_quantity: int | None = None
+
+    def minimum_quantity(self, side):
+        step = self.buy_lot if side == 'buy' else self.sell_lot
+        minimum = self.min_buy_quantity if side == 'buy' else self.min_sell_quantity
+        return int(step if minimum is None else minimum)
+
+    def order_quantity(self, maximum, side, *, holding=None):
+        """Largest legal declaration within a share budget; minima are not steps.
+
+        An entire remaining sell position may include an odd residual. Partial
+        fills of a valid order are handled separately by the execution ledger.
+        """
+        if side not in ('buy', 'sell'):
+            raise ValueError('invalid_order_side')
+        quantity = max(0, int(np.floor(maximum + 1e-9)))
+        if side == 'sell' and holding is not None and quantity >= holding:
+            return int(holding)
+        step = int(self.buy_lot if side == 'buy' else self.sell_lot)
+        quantity = quantity // step * step
+        return quantity if quantity >= self.minimum_quantity(side) else 0
 
     @classmethod
     def from_record(cls, row):
-        names = list(cls.__dataclass_fields__)
-        if row is None or any(k not in row or (pd.isna(row[k]) and k != "limit_ratio") for k in names):
+        fields = cls.__dataclass_fields__
+        required = [k for k, f in fields.items() if f.default is MISSING]
+        if row is None or any(k not in row or (pd.isna(row[k]) and k != "limit_ratio") for k in required):
             raise DataContractError("missing instrument execution rules")
-        obj = cls(**{k: row[k] for k in names})
+        values = {k: row[k] for k in fields if k in row and (k in required or pd.notna(row[k]))}
+        obj = cls(**values)
         if obj.asset_type not in ("stock", "equity_etf"):
             raise DataContractError(f"unvalidated asset class: {obj.asset_type}")
         if obj.buy_lot < 1 or obj.sell_lot < 1 or obj.sell_delay < 0 or obj.price_tick <= 0:
             raise DataContractError("invalid lot/settlement rules")
+        for side in ('buy', 'sell'):
+            step = obj.buy_lot if side == 'buy' else obj.sell_lot
+            minimum = obj.min_buy_quantity if side == 'buy' else obj.min_sell_quantity
+            if int(step) != step or minimum is not None and (minimum < 1 or int(minimum) != minimum or minimum < step):
+                raise DataContractError('invalid order minimum/step')
         if obj.commission < 0 or obj.min_commission < 0:
             raise DataContractError("invalid fees")
         return obj

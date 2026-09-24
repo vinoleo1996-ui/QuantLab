@@ -264,7 +264,11 @@ class Ledger:
             if delta == 0: continue
             side = "buy" if delta > 0 else "sell"
             qty = abs(int(delta))
-            if side == "sell" and target > 0: qty = qty // int(rule.sell_lot) * int(rule.sell_lot)
+            legal = rule.order_quantity(qty, side, holding=projected if side == 'sell' else None)
+            if qty and not legal:
+                self.events.append(dict(date=str(pd.Timestamp(signal_date).date()),type='order_not_submitted',
+                    instrument_id=c,side=side,quantity=qty,reason='below_minimum_order_quantity',target_quantity=target))
+            qty = legal
             if qty and (side == "sell" and (target == 0 or reason == "risk_exit") or qty * self.marks[c] >= self.min_trade_value):
                 self.orders.append(Order(f"O{len(self.orders)+1:08d}", c, side, qty, qty,
                                          str(pd.Timestamp(signal_date).date()), reason))

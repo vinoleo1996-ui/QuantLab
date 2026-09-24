@@ -149,10 +149,10 @@ class LocalSources(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);db=root/'lake.duckdb';cache=root/'raw';cache.mkdir()
             con=duckdb.connect(str(db))
-            con.execute("CREATE TABLE security_master AS SELECT '000001.SZ' AS symbol,'stock' AS asset_class UNION ALL SELECT '600001.SH','stock'")
+            con.execute("CREATE TABLE security_master AS SELECT '000001.SZ' AS symbol,'stock' AS asset_class UNION ALL SELECT '600001.SH','stock' UNION ALL SELECT '688001.SH','stock'")
             dates=pd.bdate_range('2024-01-02',periods=10)
             rows=[]
-            for code in ['000001.SZ','600001.SH']:
+            for code in ['000001.SZ','600001.SH','688001.SH']:
                 for d in dates:rows.append(dict(symbol=code,trading_day=d,open=10.,high=10.,low=10.,close=10.,previous_close=10.,volume=100000,amount=1000000.,source_name='raw',raw_hash='r1',adjusted=False))
             con.register('input_bars',pd.DataFrame(rows));con.execute('CREATE TABLE daily_bars AS SELECT * FROM input_bars')
             con.execute("CREATE TABLE adjustment_factors AS SELECT symbol,trading_day,1.0 AS factor FROM daily_bars")
@@ -169,10 +169,14 @@ class LocalSources(unittest.TestCase):
             (cache/'benchmark.json').write_text(json.dumps(dict(error_code='0',sha256=digest)))
             original=hashlib.sha256(db.read_bytes()).hexdigest()
             result=export_local_dataset(db,root/'snapshots',raw_cache_roots=[cache],start=dates[0],end=dates[-1])
-            self.assertEqual(result['securities'],2)
+            self.assertEqual(result['securities'],3)
             self.assertEqual(hashlib.sha256(db.read_bytes()).hexdigest(),original)
             ds=load_dataset(result['manifest'],'free_research')
-            self.assertEqual(len(ds.panels),2)
+            self.assertEqual(len(ds.panels),3)
+            rules=ds.instruments.set_index('instrument_id')
+            self.assertEqual(rules.loc['sh.600001','sell_lot'],100)
+            self.assertEqual(rules.loc['sh.688001','sell_lot'],1)
+            self.assertEqual(rules.loc['sh.688001','min_sell_quantity'],200)
             self.assertTrue(ds.instruments.listing_date.isna().all())
             self.assertTrue(ds.industry_records.available_at.isna().all())
             self.assertEqual(ds.validate('free_research'),[])

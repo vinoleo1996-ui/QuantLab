@@ -68,6 +68,62 @@ def _record_once(registry, trial, outcome):
         registry.record(trial, outcome)
 
 
+def comparison_payload(run):
+    """Keep full evidence on disk; retain only downstream statistical inputs."""
+    return {key:run[key] for key in ('run_id','daily_return','account','fills','risk_history') if key in run}
+
+
+def evidence_health(summary):
+    reasons = []
+    if not summary.get('accounting',{}).get('passed'): reasons.append('accounting_failed_or_missing')
+    if not summary.get('experiment_health',{}).get('passed'): reasons.append('experiment_not_exercised_or_unverified')
+    health = summary.get('run_health')
+    if health is None: reasons.append('run_health_unavailable')
+    else:
+        for key, reason in (('allocation_failures','allocation_failures'),
+                            ('forecast_failures','invalid_or_warmup_decisions'),
+                            ('data_issue_count','held_data_gaps')):
+            if health.get(key,0): reasons.append(reason)
+    return dict(passed=not reasons, reasons=reasons)
+
+
+def recorded_stress_results(registry, trial, checkpoint=None):
+    """SQLite is written first, so it also recovers a crash before JSON replace."""
+    with sqlite3.connect(registry.path) as db:
+        rows = db.execute('SELECT fold,body FROM outcomes WHERE id=? AND fold LIKE ?',
+                          (trial,'stress:%')).fetchall()
+    recorded = {}
+    for fold, body in rows:
+        name = fold.removeprefix('stress:')
+        if name not in STRESS_NAMES: raise ValueError('unknown_registered_stress_scenario:'+name)
+        outcome = json.loads(body)
+        if outcome.pop('fold',None) != fold: raise ValueError('stress_registered_fold_mismatch')
+        recorded[name] = outcome
+    for name, outcome in (checkpoint or {}).items():
+        if name not in recorded: raise ValueError('stress_checkpoint_not_registered:'+name)
+        normalized = json.loads(json.dumps(outcome,default=str))
+        if fingerprint(normalized)!=fingerprint(recorded[name]):
+            raise ValueError('stress_checkpoint_differs_from_registry:'+name)
+    return recorded
+
+
+def validate_stress_artifact(outcome, root):
+    """Never skip a completed replay based on an unchecked progress JSON."""
+    if outcome.get('status') not in ('completed','not_exercised','failed'):
+        raise ValueError('invalid_stress_checkpoint_status')
+    run_id = outcome.get('run_id')
+    if not run_id:
+        if outcome['status']=='completed': raise ValueError('completed_stress_artifact_missing')
+        return
+    folder = (Path(root)/run_id).resolve()
+    if not folder.is_relative_to(Path(root).resolve()): raise ValueError('invalid_stress_artifact_path')
+    run = load_run(folder)
+    if run.get('run_id')!=run_id: raise ValueError('stress_artifact_identity_mismatch')
+    actual = json.loads(json.dumps(summarize_run(run),default=str))
+    expected = json.loads(json.dumps(outcome.get('run'),default=str))
+    if fingerprint(actual)!=fingerprint(expected): raise ValueError('stress_artifact_summary_mismatch')
+
+
 def reference_outcome(name, audit):
     key = 'original_replay' if name == 'reference1882_original' else 'cash_ledger_replay'
     section = audit.get(key, {})
@@ -332,10 +388,20 @@ def _stress_dataset(ds, run, sessions, kind):
     return altered, codes
 
 
-def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
+def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None, resume=None,
+                     verify_resume=None, on_result=None):
     windows = stress_windows(base, ds.calendar)
     results = {}
+    if resume and verify_resume is None: raise ValueError('stress_resume_verifier_required')
+    if set(resume or {})-set(STRESS_NAMES): raise ValueError('unknown_resumed_stress_scenario')
+    def remember(name, outcome):
+        if on_result is not None: on_result(name,outcome)
+        results[name] = outcome
     for name in STRESS_NAMES:
+        if name in (resume or {}):
+            verify_resume(name,resume[name])
+            results[name] = resume[name]
+            continue
         kwargs = {}
         changed = ds
         active_prepared = prepared
@@ -352,17 +418,17 @@ def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
                 try:
                     changed, codes = _stress_dataset(ds, base, sessions, name)
                 except (ValueError,KeyError,TypeError,ArithmeticError) as exc:
-                    results[name]=dict(status='failed',constraints_passed=False,reason=str(exc))
+                    remember(name,dict(status='failed',constraints_passed=False,reason=str(exc)))
                     continue
                 active_prepared = None
         needs_window = name not in ('cost_double', 'liquidity_30pct', 'execution_delay_2')
         if needs_window and (not sessions or (name in ('missing_held_quotes_5', 'opening_gap_10pct', 'correlated_fall_5') and not codes)):
-            results[name] = dict(status='not_exercised', constraints_passed=False, reason='no_held_exit_window')
+            remember(name,dict(status='not_exercised', constraints_passed=False, reason='no_held_exit_window'))
             continue
         try:
             stress = replay(changed, cfg, spec, prepared=active_prepared, **kwargs)
         except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
-            results[name] = dict(status='failed', constraints_passed=False, reason=str(exc))
+            remember(name,dict(status='failed', constraints_passed=False, reason=str(exc)))
             continue
         summary = summarize_run(stress)
         locks=('fixed_lock_5','adverse_exit_lock_5','full_halt_5')
@@ -405,7 +471,7 @@ def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
             ('derived_limit_mismatch','derived_open_outside_rule_bounds','unverified_derived_limit_rule')
             and pd.Timestamp(e['date'])>=sessions[0]] if sessions else []
         constraints = summary['accounting']['passed'] and not (name in locks and fills_during_lock) and not malformed
-        results[name] = dict(status='completed' if exercised else 'not_exercised',
+        remember(name,dict(status='completed' if exercised else 'not_exercised',
             constraints_passed=bool(constraints and exercised), window=[str(x.date()) for x in sessions],
             ex_post_window=name in ('adverse_exit_lock_5','missing_held_quotes_5','opening_gap_10pct','correlated_fall_5'), held_codes=codes,
             scenario_exercised=exercised,matching_exit_request=bool(matching_exits) if name in locks else None,
@@ -415,17 +481,17 @@ def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
             price_stress_evidence=changed.manifest.get('stress_variant') if changed is not ds else None,
             requested_exit_orders=len(matching_exits), drawdown_target=.20 if spec['risk_policy']=='P0' else .25,
             risk_target_met=bool(summary.get('conditional_metrics') and
-                summary['conditional_metrics']['max_drawdown'] >= (-.20 if spec['risk_policy']=='P0' else -.25)))
+                summary['conditional_metrics']['max_drawdown'] >= (-.20 if spec['risk_policy']=='P0' else -.25))))
+        del stress
     return results
 
 
-def verdict(summary, comparison, ci20, ci60, stress, *, data_assessment):
-    reasons = []
-    if not summary.get('accounting', {}).get('passed'): reasons.append('accounting_failed_or_missing')
+def verdict(summary, comparison, ci20, ci60, stress, *, data_assessment, control_summary=None):
+    candidate_health = evidence_health(summary)
+    control_health = evidence_health(control_summary or {})
+    reasons = candidate_health['reasons'][:]
+    reasons.extend('control_'+reason for reason in control_health['reasons'])
     if not data_assessment.get('accounting_verified'): reasons.append('accounting_coverage_unverified')
-    if summary.get('run_health', {}).get('allocation_failures', 0): reasons.append('allocation_failures')
-    if summary.get('run_health', {}).get('forecast_failures', 0): reasons.append('invalid_or_warmup_decisions')
-    if summary.get('run_health', {}).get('data_issue_count', 0): reasons.append('held_data_gaps')
     if summary.get('net_profit') is None or summary['net_profit'] <= 0: reasons.append('net_profit_not_positive')
     if not comparison or comparison['annualized_net_excess'] <= 0: reasons.append('increment_not_positive')
     segments = [s for s in (comparison or {}).get('segments', []) if s.get('complete', False)]
@@ -443,6 +509,7 @@ def verdict(summary, comparison, ci20, ci60, stress, *, data_assessment):
     if data_assessment.get('warnings'): reasons.append('research_data_assumptions_require_review')
     return dict(status='retrospective_candidate_for_forward_observation' if not reasons else 'unproven',
                 reasons=sorted(set(reasons)), promotion_approved=False,
+                comparison_health=dict(candidate=candidate_health,control=control_health),
                 retrospective_only=True, historical_search_complete=False, drawdown_target=drawdown_target,
                 note='No automatic adoption. Historical selection, concentration, execution calibration and forward evidence remain separate.')
 
@@ -454,13 +521,14 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
     ds = load_dataset(manifest, profile='free_research')
     assessment = research_assessment(ds, require_industry=False)
     if assessment['status'] != 'research_ready': return assessment
+    data_version = ds.version
     protocol = frozen_protocol(ds, start=start, end=end, run_stress=run_stress)
     source = provenance()
-    identity = fingerprint(dict(protocol=protocol, data=ds.version, config=asdict(CONFIG), source=source))[:24]
+    identity = fingerprint(dict(protocol=protocol, data=data_version, config=asdict(CONFIG), source=source))[:24]
     root = Path(output) / identity
     root.mkdir(parents=True, exist_ok=True)
     if (root / 'summary.json').exists(): return json.loads((root / 'summary.json').read_text())
-    frozen = dict(protocol=protocol, data_version=ds.version, source=source, config=asdict(CONFIG), assessment=assessment)
+    frozen = dict(protocol=protocol, data_version=data_version, source=source, config=asdict(CONFIG), assessment=assessment)
     if (root / 'protocol.json').exists() and json.loads((root / 'protocol.json').read_text()) != json.loads(json.dumps(frozen, default=str)):
         raise ValueError('protocol_already_frozen_differently')
     atomic_json(root / 'protocol.json', frozen)
@@ -468,10 +536,10 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
         for file in sorted([*(ROOT / 'quantlab').rglob('*.py'), *(ROOT / 'scripts').glob('*.py')]):
             archive.add(file, arcname=str(file.relative_to(ROOT)))
     registry = ExperimentRegistry(root / 'registry')
-    registered = {name: registry.register('policy_attribution', spec, ds.version, 'fixed', protocol['version'])
+    registered = {name: registry.register('policy_attribution', spec, data_version, 'fixed', protocol['version'])
                   for name, spec in ARMS.items()}
     for name in REFERENCE_ARMS:
-        registered[name] = registry.register('reference1882_source_audit', dict(reference=name), ds.version,
+        registered[name] = registry.register('reference1882_source_audit', dict(reference=name), data_version,
                                              'source_audit', protocol['version'])
     # Registration is complete before the first account is evaluated.
     before = provenance()
@@ -482,6 +550,12 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
     outcomes_path = root / 'outcomes.json'
     outcomes = json.loads(outcomes_path.read_text()) if outcomes_path.exists() else {}
 
+    def prepared_for(cfg):
+        key = fingerprint(asdict(cfg))
+        if key not in cache:
+            cache[key] = prepare(ds, cfg, shared=next(iter(cache.values())) if cache else None)
+        return cache[key]
+
     def replay(data, cfg, spec, *, prepared=None, **kwargs):
         result = Engine(cfg).run_dataset(data, strategy='legacy_repaired', start=start, end=end,
                     data_mode='free_research', industry_policy='enforced', prepared=prepared,
@@ -490,7 +564,7 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
         if provenance() != source: raise ValueError('source_or_environment_changed_during_replay')
         compact = {k: v for k, v in result.items()
                    if k not in ('input_panels', 'input_instruments', 'input_actions', '_runtime', 'factor_panels')}
-        compact['source_dataset'] = dict(manifest=str(Path(manifest).resolve()), data_version=ds.version,
+        compact['source_dataset'] = dict(manifest=str(Path(manifest).resolve()), data_version=data_version,
                                         stress_variant=data.manifest.get('stress_variant'))
         persist_run(compact, root=root / ('runs' if not kwargs and data is ds else 'stress_runs'))
         result['run_id'], result['code_version'] = compact['run_id'], compact['code_version']
@@ -500,22 +574,28 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
         print('[policy] replay', name, flush=True)
         if name in outcomes:
             prior = outcomes[name]
+            _record_once(registry, registered[name], prior)
             if prior.get('run_id'):
-                result = load_run(root / 'runs' / prior['run_id'])
-                completed[name] = result
-                summaries[name] = summarize_run(result)
+                folder = (root / 'runs' / prior['run_id']).resolve()
+                if not folder.is_relative_to((root / 'runs').resolve()):
+                    raise ValueError('invalid_primary_artifact_path')
+                result = load_run(folder)
+                summary = summarize_run(result)
+                if (result.get('run_id') != prior['run_id'] or
+                    fingerprint(json.loads(json.dumps(summary, default=str))) != fingerprint(prior.get('summary'))):
+                    raise ValueError('primary_artifact_summary_mismatch')
+                completed[name] = comparison_payload(result)
+                summaries[name] = summary
+                del result
             continue
         cfg = arm_config(spec)
-        key = fingerprint(asdict(cfg))
         try:
-            if key not in cache:
-                cache[key] = prepare(ds, cfg, shared=next(iter(cache.values())) if cache else None)
-            result = replay(ds, cfg, spec, prepared=cache[key])
+            result = replay(ds, cfg, spec, prepared=prepared_for(cfg))
             summary = summarize_run(result)
             outcome = dict(fold='fixed', status=result['status'], run_id=result['run_id'], summary=summary)
-            completed[name] = {k:v for k,v in result.items()
-                               if k not in ('input_panels','input_instruments','input_actions','_runtime','factor_panels')}
+            completed[name] = comparison_payload(result)
             summaries[name] = summary
+            del result
         except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
             outcome = dict(fold='fixed', status='failed', reason=str(exc))
         _record_once(registry, registered[name], outcome)
@@ -529,12 +609,18 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
             _record_once(registry, registered[name], outcome)
             outcomes[name] = outcome
             atomic_json(outcomes_path, outcomes)
+        else:
+            _record_once(registry, registered[name], outcomes[name])
+    # Keep conditional differences even when an exercised arm has failures.
+    # Adoption checks below require both candidate and control to be healthy.
     usable = {n: r for n, r in completed.items() if summaries[n]['accounting']['passed'] and summaries[n]['experiment_health']['passed']}
     contrasts = {k: pair for k, pair in CONTRASTS.items() if all(n in usable for n in pair)}
     family = paired_returns(usable, contrasts) if contrasts else pd.DataFrame()
     ci = {str(block): simultaneous_block_ci(family, block=block, seed=protocol['seed'])
           for block in (20, 60)} if not family.empty else {}
     comparisons = {name: dict(candidate=contrasts[name][0], control=contrasts[name][1],
+                             comparison_health={side:evidence_health(summaries[arm])
+                                                for side,arm in zip(('candidate','control'),contrasts[name])},
                              annualized_net_excess=float(values.mean() * 252),
                              relative_wealth=float((1 + usable[contrasts[name][0]]['daily_return']).prod() /
                                                    (1 + usable[contrasts[name][1]]['daily_return']).prod() - 1),
@@ -544,25 +630,34 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
                              lagged_budget_attribution=lagged_budget_attribution(usable[contrasts[name][0]], usable[contrasts[name][1]]))
                    for name, values in family.items()}
     dsr = family_sharpe(usable, registered_trials=len(ARMS), historical_search_complete=False) if usable else {}
-    stresses = {}
+    stress_path = root / 'stress.json'
+    stresses = json.loads(stress_path.read_text()) if stress_path.exists() else {}
     if run_stress:
         for name in usable:
             if name != 'U5P2' and summaries[name]['net_profit'] <= 0: continue
             print('[policy] stress', name, flush=True)
             spec = ARMS[name]
             cfg = arm_config(spec)
-            stresses[name] = run_stress_suite(ds, cfg, spec, usable[name], replay,
-                                               prepared=cache.get(fingerprint(asdict(cfg))))
-            for scenario, outcome in stresses[name].items():
+            resumed = recorded_stress_results(registry, registered[name], stresses.get(name))
+            stresses[name] = dict(resumed)
+            def checkpoint(scenario, outcome):
                 _record_once(registry, registered[name], dict(fold='stress:' + scenario, **outcome))
-            atomic_json(root / 'stress.json', stresses)
+                stresses[name][scenario] = outcome
+                atomic_json(stress_path, stresses)
+            def verify(scenario, outcome):
+                validate_stress_artifact(outcome, root / 'stress_runs')
+            remaining = set(STRESS_NAMES) - set(resumed)
+            stresses[name] = run_stress_suite(ds, cfg, spec, usable[name], replay,
+                prepared=prepared_for(cfg) if remaining else None,
+                resume=resumed, verify_resume=verify, on_result=checkpoint)
+            atomic_json(stress_path, stresses)
     adjudications = {}
     for contrast, comparison in comparisons.items():
         name = comparison['candidate']
         adjudications[contrast] = verdict(summaries[name], comparison,
             ci.get('20', {}).get('comparisons', {}).get(contrast), ci.get('60', {}).get('comparisons', {}).get(contrast),
-            stresses.get(name, {}), data_assessment=assessment)
-    summary = dict(run_id=identity, status='research_unvalidated', data_version=ds.version,
+            stresses.get(name, {}), data_assessment=assessment, control_summary=summaries[comparison['control']])
+    summary = dict(run_id=identity, status='research_unvalidated', data_version=data_version,
         model_version=protocol['version'], as_of=end, metrics=None, promotion_approved=False,
         historical_data_already_examined=True, protocol=protocol, runs=summaries,
         failed={k: v for k, v in outcomes.items() if v['status'] in ('failed', 'blocked_data')},

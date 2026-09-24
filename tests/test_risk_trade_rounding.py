@@ -12,6 +12,18 @@ from test_dynamic_engine import fixture, context
 
 
 class RiskTradeRoundingTests(unittest.TestCase):
+    def test_fixed_single_stock_breach_does_not_sell_unrelated_position(self):
+        matrix=pd.DataFrame([[1.,0.]],index=['A_cap'],columns=['A','B'])
+        shares,proof=round_risk_sales({'A':100,'B':900},{'A':1.,'B':1.},1000.,
+            {'A':.05,'B':.9},{'B':RULE},linear_limits=[(matrix,pd.Series({'A_cap':.05}))])
+        self.assertEqual(shares,{'A':100,'B':900})
+        self.assertEqual(proof['additional_lots'],0)
+        self.assertEqual(proof['expected_new_sell_value'],0.)
+        self.assertFalse(proof['projected_constraints_passed'])
+        self.assertAlmostEqual(proof['maximum_linear_excess'],.05)
+        self.assertEqual(proof['unresolved_fixed_holdings'],['A'])
+        self.assertEqual(proof['unresolved_reason'],'no_improving_sell')
+
     def test_unknown_rules_remain_fixed_exposure_and_nan_covariance_is_rejected(self):
         matrix=pd.DataFrame([[1.,1.]],index=['gross'],columns=['A','B'])
         shares,proof=round_risk_sales({'A':100,'B':900},{'A':1.,'B':1.},1000.,

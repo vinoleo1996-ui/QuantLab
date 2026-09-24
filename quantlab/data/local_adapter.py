@@ -314,7 +314,10 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
                 source='observed_price_history',revision=source_hash,quality_status='ok',active=True,is_st=None,
                 state_basis='daily_observation_required',listing_date=ipo if pd.notna(ipo) else None,observation_start=first,
                 lifecycle_basis='baostock_basic' if pd.notna(ipo) else 'observed_history_not_ipo',sector='UNKNOWN',
-                asset_type='stock',buy_lot=200 if code.startswith('sh.688') else 100,sell_lot=1,sell_delay=1,
+                asset_type='stock',buy_lot=1 if code.startswith(('sh.688','sh.689','bj.')) else 100,
+                sell_lot=1 if code.startswith(('sh.688','sh.689','bj.')) else 100,
+                min_buy_quantity=200 if code.startswith(('sh.688','sh.689')) else 100,
+                min_sell_quantity=200 if code.startswith(('sh.688','sh.689')) else 100,sell_delay=1,
                 price_tick=.01,commission=.00025,min_commission=5.,limit_ratio=None)
             records.append(row)
             out=basic.get('outDate') if basic is not None else None
@@ -373,8 +376,13 @@ def export_local_dataset(database,output,*,qlib_root=None,raw_cache_roots=(),sta
         action_frame=pd.DataFrame(actions)
         if not action_frame.empty:
             action_frame=action_frame.sort_values('available_at').drop_duplicates('action_id',keep='last')
-        manifest=dict(source='local_market_snapshot',revision='local_adapter_v2',adapter_sha256=sha256_file(__file__),as_of=str(end.date()),
+        manifest=dict(source='local_market_snapshot',revision='local_adapter_v3',adapter_sha256=sha256_file(__file__),as_of=str(end.date()),
             price_basis='raw',currency='CNY',amount_unit='CNY',turnover_unit='percent',universe_coverage='historical',
+            quantity_rules=dict(declaration='minimum_separate_from_increment',
+                main_buy='100_share_multiples',main_sell='conservative_100_share_grid_or_whole_residual',
+                star='minimum_200_increment_1_or_whole_sell_residual',
+                bse='minimum_100_increment_1_or_whole_sell_residual',
+                limitation='main_board_sell_grid_is_a_conservative_research_execution_assumption'),
             industry_mode=industry_mode,feature_price_basis='historical_adjustment_snapshot',actions_coverage='partial_observed_events',
             benchmark_type='index',benchmark_id='sh.000300',benchmark_return_basis='price_return',
             panels=entries,instruments=_write_frame(work,'instruments',pd.DataFrame(records)),

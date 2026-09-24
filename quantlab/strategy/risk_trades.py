@@ -5,8 +5,6 @@ small risk excesses. Start with sales rounded down instead, and add only the
 lots needed to satisfy the declared portfolio constraints. This is a bounded
 greedy rounding repair, not a claim of a globally optimal integer portfolio.
 """
-import math
-
 import numpy as np
 import pandas as pd
 
@@ -18,9 +16,10 @@ def round_risk_sales(quantities, marks, nav, targets, rules, *, linear_limits=()
     price = np.array([marks[c] for c in codes], dtype=float)
     tradable = np.array([c in rules for c in codes],dtype=bool)
     held = np.array([max(0, quantities[c] - ((reserved or {}).get(c, 0) if c in rules else 0)) for c in codes], dtype=int)
-    lots = np.array([math.lcm(int(rules[c].buy_lot), int(rules[c].sell_lot)) if c in rules else 1 for c in codes])
+    lots = np.array([int(rules[c].sell_lot) if c in rules else 1 for c in codes])
     desired = np.array([max(0., nav * targets.get(c, 0.) / marks[c]) for c in codes])
-    sold = np.floor(np.maximum(0., held-desired) / lots + 1e-10).astype(int) * lots
+    sold = np.array([rules[c].order_quantity(max(0., held[i]-desired[i]), 'sell', holding=held[i])
+                     if c in rules else 0 for i,c in enumerate(codes)])
     result = held-sold
     result[desired <= 1e-10] = 0
     result[~tradable] = held[~tradable]
@@ -52,20 +51,29 @@ def round_risk_sales(quantities, marks, nav, targets, rules, *, linear_limits=()
         return valid, score, vol, float(excess.max()) if len(excess) else 0.
 
     rounds = 0
+    unresolved_reason = None
     while not evaluate(result)[0]:
         before = evaluate(result)[1]
         choices = []
         for i in np.flatnonzero((result>0)&tradable):
             trial = result.copy()
-            delta = min(lots[i], result[i])
+            minimum = rules[codes[i]].minimum_quantity('sell') if held[i]==result[i] else lots[i]
+            delta = min(max(lots[i], minimum), result[i])
             trial[i] -= delta
             valid, score, _, _ = evaluate(trial)
+            improvement = before-score
+            # A fixed holding may make a budget impossible to satisfy. Selling
+            # unrelated positions must not continue when it cannot reduce the
+            # remaining violation (or would make that violation worse).
+            if not valid and improvement <= 1e-12*max(1., abs(before)):
+                continue
             value = float(delta*price[i])
             # Prefer the cheapest one-lot solution if it completes the repair;
             # otherwise prefer the largest budget improvement per yuan sold.
-            key = (0, value, codes[i]) if valid else (1, -(before-score)/value, codes[i])
+            key = (0, value, codes[i]) if valid else (1, -improvement/value, codes[i])
             choices.append((key, trial))
         if not choices:
+            unresolved_reason = 'no_improving_sell'
             break  # Unknown-rule holdings remain real, fixed account exposure.
         result = min(choices, key=lambda item: item[0])[1]
         rounds += 1
@@ -75,6 +83,7 @@ def round_risk_sales(quantities, marks, nav, targets, rules, *, linear_limits=()
         projected_gross=float(result@price/nav), projected_annualized_vol=vol,
         maximum_linear_excess=linear_excess,
         projected_constraints_passed=bool(valid and (cov is not None or volatility_limit is None)),
+        unresolved_reason=unresolved_reason,
         unresolved_fixed_holdings=[c for c in codes if c not in rules],
         volatility_checked=cov is not None,
         expected_new_sell_value=float((held-result)@price),
