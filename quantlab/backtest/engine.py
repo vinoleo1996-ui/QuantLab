@@ -179,7 +179,7 @@ class Engine:
             risk_codes=sorted(set(account.quantities())|{o.instrument_id for o in account.orders if o.status in ('pending','partial')})
             if constrained_strategy and crowding and len(prior_dates) and risk_codes:
                 execution_risk=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,prior_dates[-1],risk_codes,
-                                         cfg.research.downside_corr,account.nav())
+                                         cfg.research.downside_corr,account.nav(),include_penalties=False)
             def can_buy(c, q, price, fees, ledger):
                 if c not in morning.index or not bool(morning.loc[c].get("active", False)) or (cfg.universe.a_exclude_st and bool(morning.loc[c].get("is_st", True))): return False
                 nav = ledger.nav() - fees
@@ -238,7 +238,7 @@ class Engine:
                     if w>cap+1e-6:constraint_target[c]=cap*.98
                 matrices=[(exp,cfg.portfolio.max_sector_weight)]
                 if crowding:
-                    cr=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,list(constraint_target),cfg.research.downside_corr,account.nav())
+                    cr=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,list(constraint_target),cfg.research.downside_corr,account.nav(),include_penalties=False)
                     matrices.append((cr.matrix(list(constraint_target)),cfg.research.max_cluster_weight))
                 for matrix,cap in matrices:
                     for _,row in matrix.iterrows():
@@ -282,7 +282,7 @@ class Engine:
                     if len(desired)>=cfg.capital.a_share_positions:break
                     desired.append(c)
                 codes = sorted(set(desired)|set(held))
-                rs = exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,codes,cfg.research.downside_corr,account.nav()) if crowding and codes else None
+                rs = exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,codes,cfg.research.downside_corr,account.nav(),include_penalties=False) if crowding and codes else None
                 exposures = exp.reindex(columns=codes,fill_value=0.)
                 returns = close.loc[:d,codes].pct_change(fill_method=None).tail(cfg.portfolio.vol_est_window)
                 x,status,capital = allocate_legacy(returns,cfg,selected=desired,previous=state['weights'],locked=locked,
@@ -351,7 +351,7 @@ class Engine:
                 sector=exposures@x
                 if len(sector) and sector.max()>cfg.portfolio.max_sector_weight:x*=cfg.portfolio.max_sector_weight/sector.max()
                 if constrained_strategy and crowding:
-                    rs=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,selected,cfg.research.downside_corr,account.nav())
+                    rs=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,selected,cfg.research.downside_corr,account.nav(),include_penalties=False)
                     cluster=rs.matrix(selected)@x
                     if len(cluster) and cluster.max()>cfg.research.max_cluster_weight:x*=cfg.research.max_cluster_weight/cluster.max()
                 if strategy=='vol_matched_equal':

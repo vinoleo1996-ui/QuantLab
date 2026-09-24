@@ -16,7 +16,7 @@ class RiskSnapshot:
         return pd.DataFrame({c:{self.groups.get(c,'UNKNOWN'):1.} for c in codes}).fillna(0.)
 
 
-def exit_risk(close,turnover,amount,market,date,codes,threshold=.70,nav=600000.,weight=.06):
+def exit_risk(close,turnover,amount,market,date,codes,threshold=.70,nav=600000.,weight=.06,*,include_penalties=True):
     ret=close.loc[:date,codes].pct_change(fill_method=None).tail(120)
     m=market.loc[:date].pct_change(fill_method=None).reindex(ret.index)
     down=ret.loc[m<0]
@@ -26,16 +26,25 @@ def exit_risk(close,turnover,amount,market,date,codes,threshold=.70,nav=600000.,
         return c
     for c in codes:
         if down[c].notna().sum()<30: unknown.add(c)
+    present=down.notna().astype(np.int64)
+    observations=(present.T@present).to_numpy()
+    correlations=down.corr(min_periods=30).to_numpy()
     for i,a in enumerate(codes):
-        for b in codes[i+1:]:
-            pair=down[[a,b]].dropna()
-            if len(pair)<30: unknown.update((a,b));continue
-            corr=pair[a].corr(pair[b])
+        for j in range(i+1,len(codes)):
+            b=codes[j]
+            if observations[i,j]<30: unknown.update((a,b));continue
+            corr=correlations[i,j]
             if not np.isfinite(corr): unknown.update((a,b));continue
+            # Keep the previous decision exactly at the correlation threshold;
+            # otherwise matrix and pairwise Pearson differ only in roundoff.
+            if abs(corr-threshold)<1e-12:
+                pair=down[[a,b]].dropna();corr=pair[a].corr(pair[b])
             if corr>=threshold: parent[root(b)]=root(a)
     # If any member has unknown correlation, its connected component is conservative unknown.
     unknown_roots={root(c) for c in unknown}
     for c in codes: groups[c]='UNKNOWN' if root(c) in unknown_roots else 'DOWNSIDE:'+root(c)
+    if not include_penalties:
+        return RiskSnapshot(str(date),groups,pd.Series(0.,index=codes),pd.Series(0.,index=codes),[])
     heat={};illiquid={};reasons=[]
     for c in codes:
         t=turnover.loc[:date,c].tail(252).dropna()

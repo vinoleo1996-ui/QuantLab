@@ -11,6 +11,34 @@ from quantlab.strategy.crowding import RiskSnapshot
 
 
 class LegacyReplay(unittest.TestCase):
+    def test_matrix_downside_groups_match_pairwise_reference_with_missing_quotes(self):
+        from quantlab.strategy.crowding import exit_risk
+        rng=np.random.default_rng(43);idx=pd.bdate_range('2020-01-01',periods=300)
+        codes=[str(i) for i in range(24)]
+        close=pd.DataFrame(100*np.exp(np.cumsum(rng.normal(0,.01,(300,24)),axis=0)),index=idx,columns=codes)
+        close['1']=close['0']*2
+        amount=pd.DataFrame(1e8,index=idx,columns=codes);turn=amount/1e8;market=close.mean(axis=1)
+        complete=exit_risk(close,turn,amount,market,idx[-1],codes,include_penalties=False)
+        self.assertEqual(complete.groups['0'],complete.groups['1'])
+        self.assertNotEqual(complete.groups['0'],complete.groups['3'])
+        close.loc[idx[-60:],'2']=np.nan
+        down=close.pct_change(fill_method=None).tail(120).loc[market.pct_change(fill_method=None).tail(120)<0]
+        parent={c:c for c in codes};unknown={c for c in codes if down[c].notna().sum()<30}
+        def root(c):
+            while parent[c]!=c:c=parent[c]
+            return c
+        for i,a in enumerate(codes):
+            for b in codes[i+1:]:
+                pair=down[[a,b]].dropna()
+                if len(pair)<30:unknown.update((a,b));continue
+                rho=pair[a].corr(pair[b])
+                if not np.isfinite(rho):unknown.update((a,b));continue
+                if rho>=.7:parent[root(b)]=root(a)
+        unknown_roots={root(c) for c in unknown}
+        expected={c:'UNKNOWN' if root(c) in unknown_roots else 'DOWNSIDE:'+root(c) for c in codes}
+        result=exit_risk(close,turn,amount,market,idx[-1],codes)
+        self.assertEqual(result.groups,expected)
+
     def test_maximum_capital_and_volatility_ceiling_are_both_real(self):
         cfg=deepcopy(CONFIG);codes=[str(i) for i in range(20)]
         returns=pd.DataFrame(np.random.default_rng(13).normal(0,.005,(120,20)),columns=codes)
