@@ -166,6 +166,7 @@ class ResearchConfig:
     cash_buffer: float = 0.02
     participation: float = 0.01
     entry_percentile: float = 0.90
+    entry_weight_buffer: float = 0.0     # 新增股票目标低于6%硬上限的余量；研究对照启用
     exit_percentile: float = 0.70
     exit_reviews: int = 2
     downside_corr: float = 0.70

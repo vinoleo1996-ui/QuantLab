@@ -226,6 +226,8 @@ def main(argv: list[str] | None = None) -> None:
     audit.add_argument('--feature-profile',choices=['price_volume','price_volume_industry'],default='price_volume_industry')
     free=sub.add_parser('free-research');free.add_argument('--manifest',default='data/free_research/dataset/manifest.json')
     free.add_argument('--output',default='output/free_research');free.add_argument('--train-start',default='2017-01-01');free.add_argument('--test-start',default='2020-01-01')
+    compare=sub.add_parser('compare-strategies');compare.add_argument('--manifest',default='data/free_research_120/dataset/manifest.json')
+    compare.add_argument('--output',default='output/return_comparison')
     evidence=sub.add_parser('evidence-audit');evidence.add_argument('--bundle',required=True)
     research=sub.add_parser('research');research.add_argument('--manifest',default='data/research/manifest.json')
     research.add_argument('--protocol');research.add_argument('--output',default='output/research_v3')
@@ -233,6 +235,11 @@ def main(argv: list[str] | None = None) -> None:
         fp=sub.add_parser(name);fp.add_argument('--book',required=True);fp.add_argument('--model-version',required=True)
         fp.add_argument('--manifest',default='data/research/manifest.json');fp.add_argument('--forecast');fp.add_argument('--fills');fp.add_argument('--model');fp.add_argument('--forecasts')
     args = p.parse_args(argv)
+    if args.cmd=='compare-strategies':
+        import json
+        from quantlab.comparison import run_comparison
+        result=run_comparison(args.manifest,args.output)
+        print(json.dumps({k:v for k,v in result.items() if k not in ('selection','data_assessment')},ensure_ascii=False,default=str,indent=2));return
     if args.cmd=='free-research':
         import json
         from quantlab.free_research import run_free_research

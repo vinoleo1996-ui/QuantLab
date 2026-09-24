@@ -24,6 +24,11 @@ def allocate(returns, records, exposures, cfg, gross=.98, vol_scale=1., expected
     if len(r)<40:return empty,'insufficient_covariance_history'
     cov=LedoitWolf().fit(r).covariance_ if cfg.portfolio.lw_shrinkage else r.cov().to_numpy()
     caps=np.array([cfg.research.max_etf_weight if records.loc[c].asset_type=='equity_etf' else cfg.research.max_stock_weight for c in codes])
+    # Leave room for price drift on new buys; existing positions above this soft
+    # target retain their hard limit and are not forced to sell by the buffer.
+    for i,c in enumerate(codes):
+        if records.loc[c].asset_type=='stock':
+            caps[i]=min(caps[i],max(prior[i],caps[i]-cfg.research.entry_weight_buffer))
     lower=pd.Series(locked or {},dtype=float).reindex(codes,fill_value=0.).to_numpy()
     if allowed_new is not None:
         caps=np.minimum(caps,np.array([caps[i] if c in allowed_new else prior[i] for i,c in enumerate(codes)]))

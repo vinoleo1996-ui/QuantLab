@@ -12,6 +12,18 @@ from quantlab.strategy.allocation import allocate
 
 
 class CashOpportunity(unittest.TestCase):
+    def test_entry_buffer_leaves_room_without_forcing_existing_position_sale(self):
+        ds=dataset(days=100);cfg=deepcopy(CONFIG)
+        cfg.research.entry_weight_buffer=.005
+        returns=pd.DataFrame({c:p.close.pct_change() for c,p in ds.panels.items()}).dropna()
+        records=ds.instruments.set_index('instrument_id');exp=pd.get_dummies(records.sector,dtype=float).T
+        mu=pd.Series(-.1,index=returns.columns);mu.iloc[0]=.5
+        w,status=allocate(returns,records,exp,cfg,expected=mu)
+        self.assertEqual(status,'ok');self.assertGreater(w.iloc[0],.05);self.assertLessEqual(w.iloc[0],.0550001)
+        prior=pd.Series({returns.columns[0]:.058})
+        w,status=allocate(returns,records,exp,cfg,expected=mu,previous=prior,locked=prior.to_dict())
+        self.assertEqual(status,'ok');self.assertAlmostEqual(w.iloc[0],.058,places=6)
+
     def test_negative_expected_returns_choose_cash(self):
         ds = dataset(days=100)
         cfg = deepcopy(CONFIG)

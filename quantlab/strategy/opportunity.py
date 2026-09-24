@@ -118,29 +118,38 @@ def normalized_features(raw):
 
 def forward_labels(ds,horizon=20,allow_open_assumption=False):
     rows=[]; cal=ds.calendar
+    decisions=pd.Series([decision_time(d) for d in cal],index=cal)
     for c,p in ds.panels.items():
-        acts=ds.actions[ds.actions.instrument_id==c] if not ds.actions.empty else pd.DataFrame()
-        for j,d in enumerate(cal):
-            if j+1+horizon>=len(cal): continue
+        acts=ds.actions[ds.actions.instrument_id==c].copy() if not ds.actions.empty else pd.DataFrame()
+        if not acts.empty:
+            acts['_ex']=pd.to_datetime(acts.ex_date)
+            acts['_available']=acts.available_at.map(timestamp)
+            acts=acts.sort_values('_ex');exdates=pd.DatetimeIndex(acts._ex)
+        p=p.reindex(cal)
+        prices=p.open.to_numpy()
+        statuses=('trading','derived') if allow_open_assumption else ('trading',)
+        valid=(p.quality_status.eq('ok') & p.open_status.isin(statuses) & p.open.gt(0) & np.isfinite(p.open)).to_numpy()
+        available=p.available_at.map(lambda x:timestamp(x) if pd.notna(x) else pd.NaT)
+        gaps=[pd.Timestamp(g['date']) for g in ds.manifest.get('data_gaps',[]) if g.get('instrument_id')==c]
+        for j in range(max(0,len(cal)-horizon-1)):
+            d=cal[j];a=j+1;b=j+1+horizon
             entry,exit_=cal[j+1],cal[j+1+horizon]
-            if any(g.get('instrument_id')==c and entry<=pd.Timestamp(g['date'])<=exit_ for g in ds.manifest.get('data_gaps',[])):continue
-            if entry not in p.index or exit_ not in p.index: continue
-            a,b=p.loc[entry],p.loc[exit_]
-            if a.quality_status!='ok' or b.quality_status!='ok' or not np.isfinite(a.open) or not np.isfinite(b.open): continue
-            statuses=('trading','derived') if allow_open_assumption else ('trading',)
-            if a.open<=0 or b.open<=0 or a.open_status not in statuses or b.open_status not in statuses: continue
+            if not valid[a] or not valid[b] or pd.isna(available.iloc[b]):continue
+            if any(entry<=g<=exit_ for g in gaps):continue
             shares,cash=1.,0.;bad=False
             if not acts.empty:
-                event=acts[(pd.to_datetime(acts.ex_date)>entry)&(pd.to_datetime(acts.ex_date)<=exit_)]
-                event=event[event.available_at.map(timestamp)<=decision_time(exit_)].sort_values('available_at').drop_duplicates('action_id',keep='last').sort_values('ex_date')
-                for _,action in event.iterrows():
-                    if pd.Timestamp(action.record_date)<entry: continue
-                    if action.get('action_type','distribution')!='distribution': bad=True;break
-                    cash+=shares*float(action.cash_per_share)
-                    shares*=1+float(action.share_ratio)
+                lo,hi=exdates.searchsorted(entry,side='right'),exdates.searchsorted(exit_,side='right')
+                if hi>lo:
+                    event=acts.iloc[lo:hi]
+                    event=event[event._available<=decisions.iloc[b]].sort_values('_available').drop_duplicates('action_id',keep='last').sort_values('_ex')
+                    for _,action in event.iterrows():
+                        if pd.Timestamp(action.record_date)<entry: continue
+                        if action.get('action_type','distribution')!='distribution': bad=True;break
+                        cash+=shares*float(action.cash_per_share)
+                        shares*=1+float(action.share_ratio)
             if bad: continue
-            rows.append(dict(date=d,instrument_id=c,target=(b.open*shares+cash)/a.open-1,label_end=exit_,
-                             available_at=max(timestamp(b.available_at),decision_time(exit_))))
+            rows.append(dict(date=d,instrument_id=c,target=(prices[b]*shares+cash)/prices[a]-1,label_end=exit_,
+                             available_at=max(available.iloc[b],decisions.iloc[b])))
     return pd.DataFrame(rows).set_index(['date','instrument_id']) if rows else pd.DataFrame(columns=['target','label_end','available_at'],index=pd.MultiIndex.from_tuples([],names=['date','instrument_id']))
 
 

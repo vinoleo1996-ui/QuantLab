@@ -11,4 +11,5 @@ data/bench/*.parquet
 .workbuddy-ai/
 data/research/
 data/free_research/
+data/free_research_120/
 data/**/versions/

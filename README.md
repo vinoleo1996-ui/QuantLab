@@ -33,6 +33,16 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 输出`conditional_metrics`是公开数据与日线开盘假设下的账面路径，`metrics=null`、`promotion_approved=false`。退市末价只用于带陈旧标记的估值，不结算成现金；缺失权益不声称损失有界。行业、公告和执行容量分别验收，不再要求首轮把所有模块的数据一次补齐。
 
+### 扣费收益与稳定性对照
+
+```bash
+.venv2/bin/python scripts/collect_free_research.py --output data/free_research_120/raw --count 120
+.venv2/bin/python scripts/build_free_dataset.py --raw data/free_research_120/raw --output data/free_research_120/dataset
+.venv2/bin/python -m quantlab.cli compare-strategies
+```
+
+在扩大后的事前样本上，按36/6/6滚动验证选择Ridge正则强度，并列报告冻结模型、旧评分排序、简单趋势排序、入场权重缓冲与等权基准。排序对照保留相同的预测收益分布；每个测试段、成本、现金、未成交、20/60日分块区间及执行压力均保留。不会自动将测试段赢家设为默认策略。
+
 ### 严格验收入口
 
 ```bash
@@ -56,7 +66,7 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 
 替换占位路径后使用。回测、信号和监控共用评分、预测及账本；所有输出有版本与状态。方向来自待执行订单，行情未知、跌停或现金不足仍可能不成交。信号始终标记simulation和 `executable=false`。
 
-默认且唯一主动策略为`opportunity`。没有合格数据或冻结预测则阻断；旧`repaired_legacy`入口及最小方差回退已移除。`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。新模型允许现金，行业未知股票拒绝配权。
+默认且唯一主动策略为`opportunity`。没有合格数据或冻结预测则阻断；旧`repaired_legacy`入口及最小方差回退已移除。`buy_hold`、`monthly_equal`、`vol_matched_equal`共用账本。新模型允许现金；完整行业配置拒绝未知行业，显式价量研究配置使用统一未知组上限。
 
 ## 持久前向模拟
 
@@ -67,7 +77,7 @@ MPLCONFIGDIR=/private/tmp/quantlab-mpl .venv2/bin/python -m unittest discover -s
 .venv2/bin/python -m quantlab.cli forward-recover --book output/paper.sqlite3 --model-version MODEL_HASH --manifest PATH --forecasts RUN/forecasts.json
 ```
 
-当前开发优先级仅为P1数据验收，前向工具待数据/研究验收后使用。模型、投资约束和代码版本固定；断档须显式恢复，恢复记录带重建标记。成交核对尚不等于券商账户资金与权益完整对账。开发日志、历史补跑和合成夹具都不计入六个月冻结验证。不创建自动实盘交易或定时作业。
+当前优先完成免费扩池和同账本扣费对照，前向工具待数据/研究验收后使用。模型、投资约束和代码版本固定；断档须显式恢复，恢复记录带重建标记。成交核对尚不等于券商账户资金与权益完整对账。开发日志、历史补跑和合成夹具都不计入六个月冻结验证。不创建自动实盘交易或定时作业。
 
 ## 公开行情和看板
 

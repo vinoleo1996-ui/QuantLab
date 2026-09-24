@@ -8,24 +8,29 @@ from quantlab.data.contracts import asof_records, decision_time, timestamp
 def panels_for_research(dataset):
     dates = dataset.calendar[dataset.calendar <= pd.Timestamp(dataset.manifest["as_of"]).tz_localize(None).normalize()]
     close, amount, turnover = {}, {}, {}
+    cutoffs = pd.Series([decision_time(d) for d in dates], index=dates)
+    action_groups = {}
+    if not dataset.actions.empty:
+        actions = dataset.actions.copy()
+        actions['_ex'] = pd.to_datetime(actions.ex_date).dt.normalize()
+        actions['_available'] = actions.available_at.map(timestamp)
+        action_groups = dict(tuple(actions.groupby(['instrument_id', '_ex'])))
     for c, panel in dataset.panels.items():
         p = panel.reindex(dates).copy()
-        known = pd.Series([pd.notna(row.get("available_at")) and timestamp(row.available_at) <= decision_time(t)
-                           and row.get("quality_status") == "ok" for t, row in p.iterrows()], index=dates)
+        available = p.available_at.map(lambda x: timestamp(x) if pd.notna(x) else pd.NaT)
+        known = available.notna() & available.le(cutoffs) & p.quality_status.eq('ok')
         raw = p.close.where(known)
         # Forward total-return index: actions only affect ex-date and subsequent observations.
         idx = pd.Series(np.nan, index=dates)
         prev = value = None
         pending_cash, pending_ratio = 0., 1.
         for t, px in raw.items():
-            if not dataset.actions.empty:
-                acts = dataset.actions[(dataset.actions.instrument_id == c) &
-                                       (pd.to_datetime(dataset.actions.ex_date).dt.normalize() == t)]
-                acts = acts[acts.available_at.map(timestamp) <= decision_time(t)].sort_values("available_at").drop_duplicates("action_id",keep="last")
+            acts = action_groups.get((c, t))
+            if acts is not None:
+                acts = acts[acts._available <= cutoffs.loc[t]].sort_values("_available").drop_duplicates("action_id",keep="last")
                 for _, action in acts.iterrows():
-                    if timestamp(action.available_at) <= decision_time(t):
-                        pending_cash += pending_ratio * float(action.cash_per_share)
-                        pending_ratio *= 1 + float(action.share_ratio)
+                    pending_cash += pending_ratio * float(action.cash_per_share)
+                    pending_ratio *= 1 + float(action.share_ratio)
             if not np.isfinite(px): continue
             value = 100. if prev is None else value * (px * pending_ratio + pending_cash) / prev
             idx.loc[t], prev = value, px
