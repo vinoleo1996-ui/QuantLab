@@ -232,8 +232,18 @@ class Ledger:
             rule = rules.get(c)
             if rule is None or c not in self.marks: continue
             # Share quantity locked at decision price. No implicit daily rebalancing on retries.
-            target = math.floor(nav * weights.get(c, 0.0) / self.marks[c] / rule.buy_lot) * int(rule.buy_lot)
             projected = self.quantity(c) - min(self.quantity(c), reserved.get(c, 0))
+            raw_quantity = nav * weights.get(c, 0.0) / self.marks[c]
+            if math.isclose(raw_quantity, projected, rel_tol=1e-12, abs_tol=1e-8):
+                # Unchanged holdings (including bonus odd lots) must not become
+                # sells when their NAV/weight round trip loses a floating bit.
+                target = projected
+            else:
+                units = raw_quantity / rule.buy_lot
+                nearest = round(units)
+                if math.isclose(units, nearest, rel_tol=0., abs_tol=1e-10):
+                    units = nearest
+                target = math.floor(units) * int(rule.buy_lot)
             if reserved.get(c, 0): target = min(target, projected)
             delta = target - projected
             if delta == 0: continue

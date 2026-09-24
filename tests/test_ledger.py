@@ -24,6 +24,32 @@ class LedgerContracts(unittest.TestCase):
         a.mark("2024-01-01", {"A": 10, "B": 10})
         return a
 
+    def test_risk_exit_does_not_round_unchanged_holdings_into_sales(self):
+        # Real replay: 1800 shares round-trip through NAV/weight as
+        # 1799.9999999999998. Odd lots from bonus shares must also be retained.
+        for quantity in (1800, 1850):
+            with self.subTest(quantity=quantity):
+                a = Ledger(359425.16, min_trade_value=0)
+                a.lots = {'A': [Lot(quantity, 0, 5.89, 0)],
+                          'B': [Lot(100, 0, 2427.9, 0)]}
+                a.marks = {'A': 5.89, 'B': 2427.9}
+                rules = {'A': RULE, 'B': replace(RULE, instrument_id='B')}
+                target = {'A': a.weights()['A'], 'B': 0.}
+                a.queue_targets(target, '2024-01-02', 'risk_exit', rules)
+                self.assertEqual([(o.instrument_id, o.side, o.quantity) for o in a.orders],
+                                 [('B', 'sell', 100)])
+                self.assertEqual(a.quantity('A'), quantity)
+
+    def test_lot_boundary_roundoff_and_real_reduction_remain_distinct(self):
+        a = self.account(); a.min_trade_value = 0
+        # A mathematically whole-lot target can be represented just below 0.3.
+        a.queue_targets({'A': .3-1e-16}, '2024-01-02', 'initial', {'A': RULE})
+        self.assertEqual(a.orders[-1].quantity, 3000)
+        a.lots = {'A': [Lot(3050, 0, 10., 0)]}; a.cash = 69500.
+        a.queue_targets({'A': .29999}, '2024-01-03', 'risk_exit', {'A': RULE})
+        self.assertEqual(a.orders[-1].side, 'sell')
+        self.assertEqual(a.orders[-1].quantity, 100)
+
     def test_risk_exit_survives_rebalance_partial_fill_and_retry(self):
         a=self.account();a.cash=90_000;a.lots={'A':[Lot(1000,0,10,0)]};rules={'A':RULE}
         a.queue_targets({},'2024-01-02','risk_exit',rules)
