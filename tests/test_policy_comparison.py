@@ -242,7 +242,8 @@ class PolicyComparisonHealthAndResumeTests(unittest.TestCase):
             net_profit=100., conditional_metrics={'max_drawdown': -.1})
         pair = dict(annualized_net_excess=.04,
                     segments=[dict(complete=True, annualized_net_excess=.04)] * 3)
-        stress = {name:dict(constraints_passed=True, run={'net_profit': 50.}) for name in STRESS_NAMES}
+        stress = {name:dict(constraints_passed=True, risk_target_met=True,
+                            run={'net_profit': 50.}) for name in STRESS_NAMES}
         args = (healthy, pair, {'simultaneous_lower': .01}, {'simultaneous_lower': .01}, stress)
         evidence = dict(accounting_verified=True, warnings=[])
         passed = verdict(*args, data_assessment=evidence, control_summary=healthy)
@@ -261,6 +262,28 @@ class PolicyComparisonHealthAndResumeTests(unittest.TestCase):
                 self.assertEqual(pair['annualized_net_excess'], .04)
         self.assertIn('control_run_health_unavailable',
                       verdict(*args, data_assessment=evidence)['reasons'])
+
+    def test_stress_drawdown_breach_blocks_an_otherwise_profitable_candidate(self):
+        healthy = dict(accounting={'passed': True}, experiment_health={'passed': True}, risk_policy='P2',
+            run_health=dict(allocation_failures=0, forecast_failures=0, data_issue_count=0),
+            net_profit=100., conditional_metrics={'max_drawdown': -.1})
+        pair = dict(annualized_net_excess=.04,
+                    segments=[dict(complete=True, annualized_net_excess=.04)] * 3)
+        stress = {name:dict(constraints_passed=True, risk_target_met=True,
+                            run={'net_profit': 50.}) for name in STRESS_NAMES}
+        interval = {'simultaneous_lower': .01}
+        evidence = dict(accounting_verified=True, warnings=[])
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                pressure = deepcopy(stress)
+                if missing:
+                    del pressure['opening_gap_10pct']['risk_target_met']
+                else:
+                    pressure['opening_gap_10pct']['risk_target_met'] = False
+                result = verdict(healthy, pair, interval, interval, pressure,
+                                 data_assessment=evidence, control_summary=healthy)
+                self.assertEqual(result['status'], 'unproven')
+                self.assertIn('stress_drawdown_target_missing_or_exceeded', result['reasons'])
 
     def test_in_memory_payload_drops_large_evidence_and_retains_same_statistical_inputs(self):
         run = small_account_run()

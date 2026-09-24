@@ -504,6 +504,10 @@ def verdict(summary, comparison, ci20, ci60, stress, *, data_assessment, control
     if metrics.get('max_drawdown', -1) < -drawdown_target: reasons.append('drawdown_target_exceeded')
     if not stress or any(not s.get('constraints_passed') for s in stress.values()) or len(stress) != len(STRESS_NAMES):
         reasons.append('stress_missing_failed_or_not_exercised')
+    # Solvent, executable orders do not imply that the account stayed within
+    # its drawdown budget. Keep the separately recorded pressure risk verdict.
+    if not stress or any(not s.get('risk_target_met') for s in stress.values()):
+        reasons.append('stress_drawdown_target_missing_or_exceeded')
     if stress.get('cost_double', {}).get('run', {}).get('net_profit', 0.) <= 0:
         reasons.append('double_cost_profit_not_positive')
     if data_assessment.get('warnings'): reasons.append('research_data_assumptions_require_review')
