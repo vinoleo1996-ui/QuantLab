@@ -107,7 +107,9 @@ def allocate_legacy(returns, cfg, *, selected, previous=None, locked=None,
             detail['solver_message'] = first.message
             return empty, 'maximum_gross_solver_failed', detail
         max_weights = first.x
-    g = float(max_weights.sum()); detail['feasible_gross'] = g
+    # Stage 1 may exceed the LP upper bound by roundoff. Do not turn that
+    # tolerated error into an infeasible exact equality in stage 2.
+    g = min(float(max_weights.sum()), float(lp.x.sum())); detail['feasible_gross'] = g
     if g < 1e-9: return empty, 'ok', detail
     equality = {'type':'eq','fun':lambda w:w.sum()-g,'jac':lambda w:np.ones(n)}
     # Constant-row inequalities are implied by sum(w)=g. Removing them avoids
