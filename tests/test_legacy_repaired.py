@@ -11,7 +11,7 @@ from quantlab.strategy.crowding import RiskSnapshot
 
 
 class LegacyReplay(unittest.TestCase):
-    def test_matrix_downside_groups_match_pairwise_reference_with_missing_quotes(self):
+    def test_missing_quotes_do_not_erase_other_stocks_observed_downside_groups(self):
         from quantlab.strategy.crowding import exit_risk
         rng=np.random.default_rng(43);idx=pd.bdate_range('2020-01-01',periods=300)
         codes=[str(i) for i in range(24)]
@@ -21,23 +21,15 @@ class LegacyReplay(unittest.TestCase):
         complete=exit_risk(close,turn,amount,market,idx[-1],codes,include_penalties=False)
         self.assertEqual(complete.groups['0'],complete.groups['1'])
         self.assertNotEqual(complete.groups['0'],complete.groups['3'])
-        close.loc[idx[-60:],'2']=np.nan
-        down=close.pct_change(fill_method=None).tail(120).loc[market.pct_change(fill_method=None).tail(120)<0]
-        parent={c:c for c in codes};unknown={c for c in codes if down[c].notna().sum()<30}
-        def root(c):
-            while parent[c]!=c:c=parent[c]
-            return c
-        for i,a in enumerate(codes):
-            for b in codes[i+1:]:
-                pair=down[[a,b]].dropna()
-                if len(pair)<30:unknown.update((a,b));continue
-                rho=pair[a].corr(pair[b])
-                if not np.isfinite(rho):unknown.update((a,b));continue
-                if rho>=.7:parent[root(b)]=root(a)
-        unknown_roots={root(c) for c in unknown}
-        expected={c:'UNKNOWN' if root(c) in unknown_roots else 'DOWNSIDE:'+root(c) for c in codes}
+        close.loc[idx[-100:],'2']=np.nan
         result=exit_risk(close,turn,amount,market,idx[-1],codes)
-        self.assertEqual(result.groups,expected)
+        self.assertEqual(result.groups['2'],'UNKNOWN')
+        self.assertEqual(result.groups['0'],result.groups['1'])
+        self.assertNotEqual(result.groups['0'],'UNKNOWN')
+        self.assertNotEqual(result.groups['0'],result.groups['3'])
+        matrix=result.matrix(codes)
+        self.assertEqual(matrix.loc[result.groups['0'],'2'],1.)
+        self.assertEqual(matrix.loc[result.groups['0'],'3'],0.)
 
     def test_maximum_capital_and_volatility_ceiling_are_both_real(self):
         cfg=deepcopy(CONFIG);codes=[str(i) for i in range(20)]

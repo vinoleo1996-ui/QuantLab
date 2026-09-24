@@ -13,7 +13,7 @@ from quantlab.data.contracts import fingerprint
 from quantlab.strategy.risk import RiskManager
 
 
-POLICY_VERSION = "risk-budget-20260924-v1"
+POLICY_VERSION = "risk-budget-20260925-v2"
 PROFILES = {
     "defensive": dict(max_stock_weight=.06, max_sector_weight=.25,
                       max_cluster_weight=.30, cash_buffer=.20, target_vol=.12),
@@ -33,6 +33,9 @@ def policy_definition(policy_id):
                 deepcopy(PROFILES["normal"]) if policy_id == "P1" else "legacy_config",
                 drawdown_levels=[.12, .18, .22, .25] if policy_id != "P0" else "legacy_config",
                 promotion_sessions=5, demotion_sessions=2,
+                counter_key='same_desired_state_consecutive_benchmark_sessions',
+                promotion_transition='one_level_toward_desired',
+                demotion_transition='direct_to_confirmed_desired',
                 recovery_buffer=.03, recovery_sessions=5,
                 stock_buffer=.01, group_buffer=.02,
                 unknown_sector=.25, unknown_cluster=.30)
@@ -96,6 +99,7 @@ market-state or drawdown recovery. Raising permission never creates an order.
         self.state = "normal"
         self.transition_count = 0
         self.transition_direction = 0
+        self.transition_target = None
         self.last_date = None
 
     def approve_resume(self, *, approved_by):
@@ -137,9 +141,13 @@ market-state or drawdown recovery. Raising permission never creates an order.
         market = self.market_snapshot(date) if self.policy_id == "P2" else {}
         flags = bool(data_stale or exit_blocked)
         if self.policy_id == "P2" and fresh:
+            if self.last_date in self.benchmark.index and self.benchmark.index.get_loc(date)-self.benchmark.index.get_loc(self.last_date)>1:
+                self.transition_count = self.transition_direction = 0
+                self.transition_target = None
             if flags:
                 self.state = "defensive"
                 self.transition_count = self.transition_direction = 0
+                self.transition_target = None
             else:
                 current = STATES.index(self.state)
                 wanted = STATES.index(market["desired_state"])
@@ -151,12 +159,16 @@ market-state or drawdown recovery. Raising permission never creates an order.
                     direction = 0
                 if direction == 0:
                     self.transition_count = self.transition_direction = 0
+                    self.transition_target = None
                 else:
-                    self.transition_count = self.transition_count+1 if direction == self.transition_direction else 1
+                    desired=market['desired_state']
+                    self.transition_count = self.transition_count+1 if desired == self.transition_target else 1
                     self.transition_direction = direction
+                    self.transition_target = desired
                     if self.transition_count >= (5 if direction > 0 else 2):
-                        self.state = STATES[current+direction]
+                        self.state = STATES[current+1] if direction>0 else STATES[wanted]
                         self.transition_count = self.transition_direction = 0
+                        self.transition_target = None
         if self.policy_id == "P0":
             profile = dict(max_stock_weight=self.cfg.research.max_stock_weight,
                            max_sector_weight=self.cfg.portfolio.max_sector_weight,
@@ -177,7 +189,7 @@ market-state or drawdown recovery. Raising permission never creates an order.
         if market and not market["ready"]: reasons.append(market["reason"])
         risk.update(reasons=reasons, policy_id=self.policy_id, policy_version=self.version,
                     policy_state=state, market=market, transition_count=self.transition_count,
-                    transition_direction=self.transition_direction)
+                    transition_direction=self.transition_direction,transition_target=self.transition_target)
         stock_buffer = 0. if self.policy_id == "P0" else .01
         group_buffer = 0. if self.policy_id == "P0" else .02
         self.last_date = date

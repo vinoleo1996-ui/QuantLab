@@ -60,6 +60,7 @@ def price_bounds(bar,rule):
 
 def trade_permission(bar, rule: InstrumentRules, side, date, *, allow_open_assumption=False):
     if bar is None: return False, "missing_open"
+    if side=='sell' and bar.get('stress_sell_blocked',False):return False,'stress_sell_lock'
     px = bar.get("open", np.nan)
     if not np.isfinite(px) or px <= 0: return False, "missing_open"
     # Full-day amount/volume is not available at the opening execution time.
@@ -221,9 +222,13 @@ class Ledger:
             if o.side == "buy" and o.status in ("pending", "partial"):
                 o.status, o.reject_reason = "cancelled", reason
 
-    def queue_targets(self, weights, signal_date, reason, rules, replace=True):
+    def queue_targets(self, weights, signal_date, reason, rules, replace=True, target_quantities=None):
         if any(not np.isfinite(w) or w < 0 for w in weights.values()) or sum(weights.values()) > 1 + 1e-9:
             raise ValueError("invalid target weights")
+        if target_quantities is not None:
+            if reason != 'risk_exit' or any(isinstance(q, bool) or not isinstance(q, (int, np.integer)) or
+                                           q < 0 or q > self.quantity(c) for c,q in target_quantities.items()):
+                raise ValueError('explicit_risk_targets_must_only_reduce_actual_shares')
         # A model rebalance cannot revoke an unfilled risk exit. Reserve its
         # remaining shares so retries neither buy them back nor duplicate sells.
         reserved = {}
@@ -242,7 +247,9 @@ class Ledger:
             # Share quantity locked at decision price. No implicit daily rebalancing on retries.
             projected = self.quantity(c) - min(self.quantity(c), reserved.get(c, 0))
             raw_quantity = nav * weights.get(c, 0.0) / self.marks[c]
-            if math.isclose(raw_quantity, projected, rel_tol=1e-12, abs_tol=1e-8):
+            if target_quantities is not None:
+                target = min(projected, target_quantities.get(c, projected))
+            elif math.isclose(raw_quantity, projected, rel_tol=1e-12, abs_tol=1e-8):
                 # Unchanged holdings (including bonus odd lots) must not become
                 # sells when their NAV/weight round trip loses a floating bit.
                 target = projected
@@ -285,6 +292,8 @@ class Ledger:
             allowed, why = trade_permission(bars.get(c), rule, side, date,allow_open_assumption=self.allow_open_assumption)
             if not allowed:
                 o.reject_reason = why
+                self.events.append(dict(type='execution_rejected',date=str(pd.Timestamp(date).date()),
+                    order_id=o.order_id,instrument_id=c,side=side,remaining=o.remaining,reason=why))
                 if side == "buy": o.status = "expired"
                 continue
             a = adv.get(c, np.nan)

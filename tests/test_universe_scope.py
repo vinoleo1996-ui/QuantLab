@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from copy import deepcopy
 import pandas as pd
+import numpy as np
 
 from fixtures_v2 import dataset
 from quantlab.config import CONFIG
@@ -9,6 +10,41 @@ from quantlab.data.market import universe_at
 
 
 class UniverseScope(unittest.TestCase):
+    def test_listing_age_counts_exchange_sessions_with_inclusive_date_boundary(self):
+        ds=dataset(days=90,stocks=6);cfg=deepcopy(CONFIG)
+        cfg.research.universe_mode='pit_liquidity';cfg.universe.a_min_listing_days=20
+        boundary=ds.calendar[20]
+        ds.instruments['listing_date']=[str(boundary.date()),ds.calendar[21],
+            str((boundary-pd.Timedelta(days=2)).date()),str(ds.calendar[50].date()),
+            str(boundary+pd.Timedelta(hours=12)),boundary.strftime('%Y%m%d')]
+        amount=pd.DataFrame(1e9,index=ds.calendar,columns=ds.panels)
+        selected,_=universe_at(ds,ds.calendar[39],amount,cfg)
+        self.assertEqual(selected,['S000','S002','S005'])
+
+    def test_bulk_daily_state_preserves_unknown_and_does_not_rewrite_ineligible_rows(self):
+        ds=dataset(days=80,stocks=7);cfg=deepcopy(CONFIG)
+        cfg.research.universe_mode='pit_liquidity'
+        ds.instruments['state_basis']='daily_observation_required'
+        ds.instruments.loc[4,'active']=False
+        ds.instruments.loc[4,'is_st']=True
+        ds.instruments.loc[4,'listing_date']='invalid_but_inactive'
+        ds.instruments.loc[5,'quality_status']='bad'
+        ds.instruments.loc[6,'state_basis']='record'
+        for i,panel in enumerate(ds.panels.values()):panel['is_st_at_open']=float(i in (1,3,5,6))
+        ds.panels['S002'].loc[ds.calendar[70],'is_st_at_open']=np.nan
+        amount=pd.DataFrame(1e9,index=ds.calendar,columns=ds.panels)
+        del ds.panels['S003']
+        selected,records=universe_at(ds,ds.calendar[70],amount,cfg)
+        self.assertEqual(selected,['S000','S006'])
+        self.assertFalse(records.loc['S000','is_st'])
+        self.assertTrue(records.loc['S001','is_st'])
+        self.assertTrue(pd.isna(records.loc['S002','is_st']))
+        self.assertFalse(records.loc['S003','is_st'])
+        self.assertTrue(records.loc['S004','is_st'])
+        self.assertFalse(records.loc['S005','is_st'])
+        self.assertFalse(records.loc['S006','is_st'])
+        self.assertEqual(records.is_st.dtype,object)
+
     def test_collection_does_not_truncate_or_drop_growth_boards(self):
         from scripts.collect_free_research import select_member_codes
         base=[f'{exchange}.{prefix}{i:03d}' for exchange,prefix in

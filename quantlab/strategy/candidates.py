@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from quantlab.data.contracts import decision_time, timestamp
+from quantlab.data.contracts import decision_time, timestamp, timestamps_series
 from quantlab.data.industry import resolve_industries
 
 
@@ -21,7 +21,7 @@ def financial_entry_evidence(dataset, date, codes):
         announced = pd.to_datetime(rows.announced_on, errors='coerce')
         rows = rows.loc[announced < date]
         if not rows.empty:
-            available = pd.to_datetime(rows.available_at, utc=True, errors='coerce')
+            available = timestamps_series(rows.available_at)
             # Where exact publication evidence exists, it must also be known.
             rows = rows.loc[available.isna() | available.le(decision_time(date).tz_convert('UTC'))]
             rows = rows.sort_values(['report_period','announced_on','revision'])

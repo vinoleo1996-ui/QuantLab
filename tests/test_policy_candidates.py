@@ -7,6 +7,18 @@ from quantlab.report.advice import rotation_advice
 
 
 class CandidateTests(unittest.TestCase):
+    def test_publication_time_uses_the_shared_china_local_contract(self):
+        ds=dataset(100,3);d=ds.calendar[90]
+        for p in ds.panels.values():p['pb_mrq']=2.
+        ds.financials=pd.DataFrame([dict(instrument_id=c,metric='net_profit',value=10.,
+            report_period='2022-12-31',announced_on=d-pd.Timedelta(days=1),
+            available_at=at,revision='1') for c,at in zip(['S000','S001','S002'],
+            [str(d.date())+' 17:00:00',str(d.date())+' 09:00:00+00:00',str(d.date())+' 10:01:00+00:00'])])
+        evidence=financial_entry_evidence(ds,d,list(ds.panels))
+        self.assertTrue(evidence['S000']['passes'])
+        self.assertTrue(evidence['S001']['passes'])
+        self.assertFalse(evidence['S002']['covered'])
+
     def test_financial_coverage_is_not_quality_and_late_release_waits(self):
         ds=dataset(100,3);d=ds.calendar[90]
         for p in ds.panels.values(): p['pb_mrq']=2.

@@ -73,21 +73,41 @@ def universe_at(dataset, date, amount, cfg):
     if ages is None:
         ages = {}
         dataset._observation_age_cache = ages
-    for c, r in records.iterrows():
-        if c not in dataset.panels or r.get("quality_status") != "ok" or not bool(r.get("active", False)): continue
+    candidates, states = [], {}
+    # Updating a single object cell copies a block under pandas Copy-on-Write.
+    # Read the same eligible records with scalar tuples, then write ST once.
+    for r in records.itertuples():
+        c = r.Index
+        if c not in dataset.panels or getattr(r,"quality_status",None) != "ok" or not bool(getattr(r,"active",False)): continue
         panel = dataset.panels[c]
-        state = r.get('is_st')
-        if r.get('state_basis') == 'daily_observation_required':
+        state = getattr(r,'is_st',None)
+        if getattr(r,'state_basis',None) == 'daily_observation_required':
             state = panel.at[date, 'is_st_at_open'] if date in panel.index and 'is_st_at_open' in panel else None
-            records.loc[c, 'is_st'] = state
+            states[c] = state
         if cfg.universe.a_exclude_st and (pd.isna(state) or bool(state)): continue
-        listing = r.get('listing_date')
+        candidates.append((c,getattr(r,'listing_date',None),getattr(r,'observation_start',None),
+                           getattr(r,'float_mktcap',np.nan)))
+    if states:
+        daily_states = pd.Series(states,dtype=object)
+        records.loc[daily_states.index,'is_st'] = daily_states
+    # One pair of searches counts inclusive exchange sessions for every exact
+    # listing date. Dates before the calendar, weekends and future dates keep
+    # the original comparison semantics; observed-age fallbacks stay separate.
+    dated = [(c,listing) for c,listing,_,_ in candidates if pd.notna(listing)]
+    listing_ages = {}
+    if dated:
+        calendar = dataset.calendar if dataset.calendar.is_monotonic_increasing else dataset.calendar.sort_values()
+        listed_on = pd.to_datetime([listing for _,listing in dated],format='mixed')
+        right = calendar.searchsorted(pd.Timestamp(date),side='right')
+        counts = np.maximum(0,right-calendar.searchsorted(listed_on,side='left'))
+        listing_ages = dict(zip((c for c,_ in dated),counts))
+    for c,listing,start,cap in candidates:
         if pd.notna(listing):
-            sessions = ((dataset.calendar >= pd.Timestamp(listing)) & (dataset.calendar <= date)).sum()
+            sessions = listing_ages[c]
         else:
             # The observed history proves a minimum age, never an exact IPO.
-            start = r.get('observation_start')
             if pd.isna(start): continue
+            panel = dataset.panels[c]
             observed = panel.close.notna().to_numpy()
             cached = ages.get(c)
             # Stress replays may replace panels, append/remove rows or mark
@@ -101,7 +121,6 @@ def universe_at(dataset, date, amount, cfg):
         if sessions < cfg.universe.a_min_listing_days: continue
         if adv_count.get(c,0)<20 or adv_mean.get(c,0)<cfg.universe.a_min_avg_amount_wan*1e4:continue
         if cfg.research.universe_mode == "pit_cap":
-            cap = r.get("float_mktcap", np.nan)
             if not np.isfinite(cap) or cap < cfg.universe.a_min_mktcap_yi * 1e8: continue
         eligible.append(c)
     return eligible, records

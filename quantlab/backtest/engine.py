@@ -40,15 +40,22 @@ def _group_cap(budget, name, kind, soft=False):
     return getattr(budget, ('soft_' if soft else 'max_')+kind+'_weight')
 
 
-def _portfolio_vol(close, date, weights, cfg):
+def _portfolio_covariance(close, date, names, cfg):
     from sklearn.covariance import LedoitWolf
-    names = [c for c,w in weights.items() if w>0 and c in close]
-    if not names: return 0.
+    if not names: return None
     r = close.loc[:date,names].pct_change(fill_method=None).tail(cfg.portfolio.vol_est_window).dropna()
     if len(r)<40: return None
     cov = LedoitWolf().fit(r).covariance_ if cfg.portfolio.lw_shrinkage else r.cov().to_numpy()
+    return pd.DataFrame(cov*252,index=names,columns=names)
+
+
+def _portfolio_vol(close, date, weights, cfg):
+    names = [c for c,w in weights.items() if w>0 and c in close]
+    if not names: return 0.
+    cov = _portfolio_covariance(close,date,names,cfg)
+    if cov is None:return None
     w = np.array([weights[c] for c in names])
-    return float(np.sqrt(max(0., w@cov@w)*252))
+    return float(np.sqrt(max(0., w@cov.to_numpy()@w)))
 
 
 def _limit_ratio(code):
@@ -107,9 +114,13 @@ class _PreparedDays:
         self.eligibility_cache={}
         self.rule_cache={}
         self.static_rules=None
-        if not dataset.instruments.instrument_id.duplicated().any():
+        # Lifecycle/industry revisions do not necessarily change lot sizes or
+        # fees. Compile genuinely constant rules once even with dated records.
+        fields=list(InstrumentRules.__dataclass_fields__)
+        rule_records=dataset.instruments.reindex(columns=fields).drop_duplicates()
+        if not rule_records.instrument_id.duplicated().any():
             self.static_rules={}
-            for _,row in dataset.instruments.iterrows():
+            for _,row in rule_records.iterrows():
                 try:self.static_rules[row.instrument_id]=InstrumentRules.from_record(row)
                 except ValueError:pass
     def day(self,d):
@@ -199,7 +210,7 @@ class Engine:
                     diagnostic=False, risk_mode="daily", prepared=None, target_schedule=None,
                     start=None, end=None, cost_mult=1.0, liquidity_mult=1.0, blocked_sessions=(),
                     execution_delay=0, forecasts=None, review_override=None, crowding=True, initial_state=None, data_mode='strict', industry_policy='enforced',
-                    risk_policy='P0', candidate='baseline', allocation_policy='legacy'):
+                    risk_policy='P0', candidate='baseline', allocation_policy='legacy', blocked_sell_sessions=()):
         if self.market != "a": return blocked_result(["us_execution_not_validated"], self.market)
         if risk_mode not in ("daily", "legacy_monthly"): raise ValueError("invalid_risk_policy")
         if risk_policy not in ('P0','P1','P2'): raise ValueError('unknown_risk_policy')
@@ -309,6 +320,7 @@ class Engine:
         run_id = fingerprint({"data": p["version"], "config": config_dump, "strategy": strategy,
                               "start": str(start), "end": str(end), "risk": risk_mode,"data_mode":data_mode,
                               "cost": cost_mult, "liquidity": liquidity_mult, "blocked": list(blocked_sessions),
+                              "blocked_sell_sessions":list(blocked_sell_sessions),
                               "delay": execution_delay, "schedule": target_schedule,
                               "forecasts": {str(d):dict(model=f.model_version,training=f.training_cutoff,mu=f.expected_returns.to_dict()) for d,f in (forecasts or {}).items()},
                               "crowding":crowding,"reviews":review_override,"industry_policy":industry_policy,
@@ -332,6 +344,8 @@ class Engine:
             else: bars = p["bars"].get(d, {})
             if d in blocked_sessions:
                 bars = {c: dict(b, open_status="halted") for c, b in bars.items()}
+            if d in blocked_sell_sessions:
+                bars = {c: dict(b, stress_sell_blocked=True) for c,b in bars.items()}
             morning = p["records"][d]
             rules = p["rules"][d].copy()
             # The opening uses the preceding close's budget, never today's close.
@@ -443,29 +457,46 @@ class Engine:
             vol_breach=portfolio_vol is not None and portfolio_vol>effective_vol+1e-6
             states[-1].update(estimated_portfolio_vol=portfolio_vol,effective_target_vol=effective_vol)
             constraint_target=dict(state['weights'])
+            rounding_limits=[]
             if constrained_strategy and constraint_target:
+                stock_caps={}
                 for c,w in list(constraint_target.items()):
                     cap=cfg.research.max_etf_weight if c in rules and rules[c].asset_type=='equity_etf' else budget.max_stock_weight
                     soft=cap*.98 if risk_policy=='P0' else budget.soft_stock_weight
                     if w>cap+1e-6:constraint_target[c]=soft
+                    stock_caps[c]=soft if w>cap+1e-6 else cap
+                rounding_limits.append((pd.DataFrame(np.eye(len(stock_caps)),index=stock_caps,columns=stock_caps),pd.Series(stock_caps)))
                 matrices=[(exp,'sector')]
                 if crowding:
                     cr=exit_risk(close,p['turnover'],amount,dataset.benchmark.close,d,list(constraint_target),cfg.research.downside_corr,account.nav(),include_penalties=False)
-                    matrices.append((cr.matrix(list(constraint_target)),'cluster'))
+                    cluster_matrix=cr.matrix(list(constraint_target))
+                    matrices.append((cluster_matrix,'cluster'))
+                    partition={}
+                    for code,weight in state['weights'].items():
+                        group=cr.groups.get(code,'UNKNOWN');partition[group]=partition.get(group,0.)+weight
+                    states[-1].update(actual_group_exposure=partition,
+                        actual_group_constraint_exposure=(cluster_matrix@pd.Series(state['weights'])).to_dict(),
+                        risk_proxy_reasons=cr.reasons,uncertainty_pairs=cr.uncertain_pairs)
                 for matrix,kind in matrices:
+                    rounding_caps={}
                     for group,row in matrix.iterrows():
                         cap=_group_cap(budget,group,kind)
                         soft=cap*.98 if risk_policy=='P0' else _group_cap(budget,group,kind,soft=True)
                         exposure=sum(row.get(c,0)*w for c,w in constraint_target.items())
-                        if exposure>cap+1e-6:
+                        actual_exposure=sum(row.get(c,0)*w for c,w in state['weights'].items())
+                        required=soft if actual_exposure>cap+1e-6 else cap
+                        rounding_caps[group]=required
+                        if exposure>required+1e-6:
                             for c in constraint_target:
-                                if row.get(c,0)>0:constraint_target[c]*=soft/exposure
+                                if row.get(c,0)>0:constraint_target[c]*=required/exposure
+                    rounding_limits.append((matrix,pd.Series(rounding_caps,dtype=float)))
             constraint_breach=any(constraint_target[c]<w-1e-8 for c,w in state['weights'].items())
             states[-1]['constraint_exit_required']=constraint_breach
             risk_exit = last_risk["level"] > old_level or bool(stops) or gross_breach or constraint_breach or vol_breach
             if risk_policy!='P0' and not last_risk.get('allow_new_stock',True):
                 account.cancel_buys('risk_budget_restricts_new_risk');delayed.clear()
             target = None
+            target_quantities=None
             reason = ""
             trace = {}
             if risk_exit:
@@ -479,6 +510,21 @@ class Engine:
                                                 effective_target_vol=effective_vol,scale=scale))
                 reason = "risk_exit"
                 account.cancel_buys(reason); delayed.clear()
+                if target:
+                    from quantlab.strategy.risk_trades import round_risk_sales
+                    names=sorted(weights)
+                    rounding_gross=min(gross_cap,sum(weights.values())*scale) if risk_policy=='P0' else gross_cap
+                    rounding_limits.append((pd.DataFrame([1.]*len(names),index=names,columns=['gross']).T,pd.Series({'gross':rounding_gross})))
+                    cov=_portfolio_covariance(close,d,names,cfg) if risk_policy!='P0' else None
+                    reserved={}
+                    for order in account.orders:
+                        if order.side=='sell' and order.reason=='risk_exit' and order.status in ('pending','partial'):
+                            reserved[order.instrument_id]=reserved.get(order.instrument_id,0)+order.remaining
+                    target_quantities,rounding=round_risk_sales(account.quantities(),account.marks,account.nav(),target,rules,
+                        linear_limits=rounding_limits,covariance=cov,
+                        volatility_limit=effective_vol if risk_policy!='P0' else None,reserved=reserved)
+                    target={c:q*account.marks[c]/account.nav() for c,q in target_quantities.items()}
+                    trace['risk_reduction']['lot_rounding']=rounding
             elif strategy == "schedule" and d in target_schedule:
                 target, reason = target_schedule[d], "scheduled_target"
             elif strategy == 'legacy_repaired' and d in reviews:
@@ -512,7 +558,8 @@ class Engine:
                 x,status,capital = allocate_legacy(returns,cfg,selected=desired,previous=state['weights'],locked=locked,
                     exposures=exposures,risk_snapshot=rs,gross=last_risk['gross_scale'],vol_scale=last_risk['vol_scale'],
                     budget=budget,equal_weight=allocation_policy=='equal',allowed_increases=allowed_increases)
-                trace.update(capital=capital,selected=desired,locked=locked,groups=rs.groups if rs else {})
+                trace.update(capital=capital,selected=desired,locked=locked,groups=rs.groups if rs else {},
+                             risk_proxy_reasons=rs.reasons if rs else [],uncertainty_pairs=rs.uncertain_pairs if rs else [])
                 if status!='ok':
                     allocation_issues.append(dict(date=str(d.date()),reason=status,capital=capital))
                     traces.append(dict(date=str(d.date()),status='allocation_failed',**trace))
@@ -593,7 +640,7 @@ class Engine:
                 exec_date = next_dates[execution_delay] if len(next_dates)>execution_delay else None
                 # Delay the same signal-day share order; do not recompute its
                 # quantity using a later NAV/price while calling that a delay.
-                account.queue_targets(target, d, reason, rules)
+                account.queue_targets(target, d, reason, rules,target_quantities=target_quantities)
                 invested = True
                 new_orders = [o for o in account.orders if o.signal_date==str(d.date())]
                 for o in new_orders:

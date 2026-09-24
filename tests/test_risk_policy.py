@@ -91,18 +91,34 @@ class RiskPolicyTests(unittest.TestCase):
             self.assertEqual(policy.evaluate(date, 100).state, 'normal')
         self.assertEqual(policy.evaluate(close.index[329], 100).state, 'active')
 
-    def test_market_demotion_requires_two_sessions_per_step(self):
+    def test_market_demotion_reaches_confirmed_defensive_state_in_two_sessions(self):
+        from unittest.mock import patch
         close = market()
         policy = PolicyController('P2', Config(), close)
         for date in close.index[320:325]:
             policy.evaluate(date, 100)
-        defensive_dates = [date for date in close.index[450:]
-                           if policy.market_snapshot(date)['desired_state'] == 'defensive']
-        self.assertGreaterEqual(len(defensive_dates), 4)
-        self.assertEqual(policy.evaluate(defensive_dates[0], 100).state, 'active')
-        self.assertEqual(policy.evaluate(defensive_dates[1], 100).state, 'normal')
-        self.assertEqual(policy.evaluate(defensive_dates[2], 100).state, 'normal')
-        self.assertEqual(policy.evaluate(defensive_dates[3], 100).state, 'defensive')
+        self.assertEqual(policy.state, 'active')
+        # Consecutive market sessions must satisfy the same condition; filtering
+        # an observed price series to defensive dates can silently skip sessions.
+        with patch.object(policy, 'market_snapshot', return_value=dict(
+                ready=True, desired_state='defensive')):
+            self.assertEqual(policy.evaluate(close.index[325], 100).state, 'active')
+            self.assertEqual(policy.evaluate(close.index[326], 100).state, 'defensive')
+            self.assertEqual(policy.evaluate(close.index[327], 100).state, 'defensive')
+
+    def test_different_conditions_and_skipped_sessions_do_not_form_a_streak(self):
+        from unittest.mock import patch
+        close=market();policy=PolicyController('P2',Config(),close)
+        policy.state='active'
+        days=close.index[320:325]
+        observations=[dict(ready=True,desired_state=s) for s in ['normal','defensive','defensive','defensive']]
+        with patch.object(policy,'market_snapshot',side_effect=observations):
+            self.assertEqual(policy.evaluate(days[0],100).state,'active')
+            self.assertEqual(policy.evaluate(days[1],100).state,'active')
+            self.assertEqual(policy.transition_count,1)
+            self.assertEqual(policy.evaluate(days[3],100).state,'active')
+            self.assertEqual(policy.transition_count,1)
+            self.assertEqual(policy.evaluate(days[4],100).state,'defensive')
 
     def test_incomplete_history_cannot_promote(self):
         close = market()

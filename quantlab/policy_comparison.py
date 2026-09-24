@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import copy, deepcopy
 from dataclasses import asdict
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import json
 import sqlite3
@@ -18,13 +19,14 @@ import numpy as np
 import pandas as pd
 
 from quantlab.config import CONFIG, ROOT
-from quantlab.data.contracts import fingerprint, load_dataset
+from quantlab.data.contracts import fingerprint, load_dataset, asof_records, decision_time, InstrumentRules
 from quantlab.data.qualification import research_assessment
 from quantlab.research import ExperimentRegistry
 from quantlab.research_statistics import (paired_returns, simultaneous_block_ci,
                                          family_sharpe, retrospective_segments, fixed_two_year_segments)
 from quantlab.report.runs import atomic_json, persist_run, load_run, provenance
 from quantlab.report.metrics import performance_table
+from quantlab.report.research_diagnostics import account_diagnostics
 from quantlab.strategy.legacy import legacy_config
 
 
@@ -49,7 +51,7 @@ CONTRASTS = {
     'allocation': ('equalP2', 'U5P2'),
 }
 REFERENCE_ARMS = ('reference1882_original', 'reference1882_cash_ledger')
-STRESS_NAMES = ('cost_double', 'liquidity_30pct', 'fixed_lock_5', 'adverse_exit_lock_5',
+STRESS_NAMES = ('cost_double', 'liquidity_30pct', 'fixed_lock_5', 'adverse_exit_lock_5', 'full_halt_5',
                 'execution_delay_2', 'missing_held_quotes_5', 'opening_gap_10pct',
                 'correlated_fall_5')
 
@@ -98,6 +100,8 @@ def frozen_protocol(ds, *, start='2020-01-02', end='2026-06-30', run_stress=True
         industry_mode=ds.manifest.get('industry_mode', 'verified_pit'), universe_scope=scope,
         stress=dict(enabled=bool(run_stress), names=list(STRESS_NAMES),
                     scope='U5P2 plus primary configurations with positive net profit',
+                    locks='fixed/adverse locks reject sells only; full_halt_5 rejects both sides; actual dated rejection events verify exit demand',
+                    price_shocks='synthetic OHLC and feature prices obey dated limits and tick rounding; report requested and realized shock',
                     adverse_window='worst five-day account return among windows containing a baseline sell fill; ex-post diagnosis'),
         references='Original 100-holding/500000-CNY result is a source audit, not ranked against 20-holding/600000-CNY arms.')
 
@@ -194,6 +198,7 @@ def summarize_run(run):
         risk_budget_state_share=budget_share,
         order_reasons=contribution, pending_orders=sum(o['status'] in ('pending', 'partial') for o in run.get('orders', [])),
         capital_diagnostics=run.get('capital_diagnostics', {}),
+        account_diagnostics=account_diagnostics(run),
         promotion_approved=False)
 
 
@@ -254,23 +259,75 @@ def _stress_dataset(ds, run, sessions, kind):
     prior = [s for s in run['account'] if pd.Timestamp(s['date']) < sessions[0]]
     codes = list(prior[-1]['quantities']) if prior else []
     altered.panels = dict(ds.panels)
+    evidence = altered.manifest['stress_variant']
+    evidence.update(synthetic=True,clipped_price_cells=0,price_impacts={})
+    stress_dates=pd.DatetimeIndex(sessions)
+    records=asof_records(ds.instruments,decision_time(sessions[0])) if kind!='missing_held_quotes_5' else None
+    def rounded(value,tick):
+        return float((Decimal(str(value))/Decimal(str(tick))).quantize(Decimal('1'),rounding=ROUND_HALF_UP)*Decimal(str(tick)))
+    def bounded(value,lower,upper,tick):
+        if not np.isfinite(value):return value
+        result=rounded(value,tick)
+        clipped=max(lower,result) if np.isfinite(lower) else result
+        clipped=min(upper,clipped) if np.isfinite(upper) else clipped
+        evidence['clipped_price_cells']+=int(abs(clipped-result)>tick/10)
+        return clipped
+    from quantlab.backtest.ledger import price_bounds
+    from quantlab.data.exchange_rules import limit_prices,limit_ratio
     for code in codes:
         panel = ds.panels[code].copy()
         if kind == 'missing_held_quotes_5':
             panel = panel.loc[~panel.index.isin(sessions)]
         elif kind == 'opening_gap_10pct':
             if sessions[0] in panel.index:
-                panel.loc[sessions[0], 'open'] *= .90
+                rule=InstrumentRules.from_record(records.loc[code]);date=sessions[0]
+                original=panel.loc[date]
+                if not np.isfinite(original.open) or original.open<=0:
+                    evidence['price_impacts'][code]=dict(status='not_exercised',reason='original_open_missing')
+                    continue
+                upper,lower=price_bounds(original,rule)
+                price=bounded(float(original.open)*.90,lower,upper,rule.price_tick)
+                panel.loc[date,'open']=price
+                panel.loc[date,'high']=max(float(original.get('high',original.close)),float(original.close),price)
+                panel.loc[date,'low']=min(float(original.get('low',original.close)),float(original.close),price)
+                evidence['price_impacts'][code]=dict(requested_open_ratio=.90,actual_open_ratio=price/float(original.open),
+                    actual_open_vs_reference=price/float(original.reference_price)-1,
+                    clipped_to_exchange_limit=abs(price-rounded(float(original.open)*.90,rule.price_tick))>rule.price_tick/10)
         elif kind == 'correlated_fall_5':
-            positions = ds.calendar.searchsorted(panel.index) - ds.calendar.searchsorted(sessions[0]) + 1
-            scale = np.power(.98, np.clip(positions, 0, 5))
-            previous_scale = np.power(.98, np.clip(positions - 1, 0, 5))
-            for field in ('open', 'high', 'low', 'close'):
-                if field in panel:
-                    panel[field] = panel[field] * scale
-            for field in ('reference_price', 'limit_up', 'limit_down'):
-                if field in panel:
-                    panel[field] = panel[field] * previous_scale
+            rule=InstrumentRules.from_record(records.loc[code]);tick=rule.price_tick
+            previous_factor=1.;previous_steps=0
+            updates={}
+            for date,original in ds.panels[code].loc[sessions[0]:].iterrows():
+                steps=int(stress_dates.searchsorted(date,side='right'))
+                requested_factor=previous_factor*.98**(steps-previous_steps)
+                if not np.isfinite(original.reference_price) or original.reference_price<=0:
+                    raise ValueError('stress_reference_unavailable:'+code+':'+str(date.date()))
+                reference=rounded(float(original.reference_price)*previous_factor,tick)
+                ratio=limit_ratio(code,date,original.get('is_st_at_open',np.nan),original.get('listing_session_lower_bound'))
+                if ratio is None:
+                    # Observed bars can supply their exact dated band even when
+                    # the generic rule helper cannot identify a fixture/market.
+                    upper0,lower0=price_bounds(original,rule)
+                    matching=[r for r in (.05,.10,.20,.30) if np.isfinite(upper0) and np.isfinite(lower0)
+                              and all(abs(a-b)<tick/10 for a,b in zip(limit_prices(original.reference_price,r,tick),(upper0,lower0)))]
+                    if len(matching)==1:ratio=matching[0]
+                    elif rule.limit_ratio is not None:raise ValueError('stress_dated_limits_unverified:'+code+':'+str(date.date()))
+                upper,lower=limit_prices(reference,ratio,tick) if ratio is not None else (np.nan,np.nan)
+                values={field:bounded(float(original[field])*requested_factor,lower,upper,tick)
+                        for field in ('open','high','low','close') if field in panel and pd.notna(original[field])}
+                if 'high' in values:values['high']=max(values.values())
+                if 'low' in values:values['low']=min(values.values())
+                actual_factor=values['close']/float(original.close) if 'close' in values else requested_factor
+                values.update(reference_price=reference,limit_up=upper,limit_down=lower)
+                if 'feature_close' in panel:values['feature_close']=original.feature_close*actual_factor
+                updates[date]=values
+                previous_factor,previous_steps=actual_factor,steps
+                if date<=sessions[-1]:
+                    evidence['price_impacts'][code]=dict(requested_cumulative_ratio=.98**steps,
+                        actual_close_ratio=actual_factor,through=str(date.date()),feature_price_shocked='feature_close' in panel)
+            if updates:
+                updated=pd.DataFrame.from_dict(updates,orient='index')
+                panel.loc[updated.index,updated.columns]=updated
         altered.panels[code] = panel
     return altered, codes
 
@@ -286,12 +343,17 @@ def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
                                                  'opening_gap_10pct', 'correlated_fall_5') else windows['fixed']
         if name == 'cost_double': kwargs['cost_mult'] = 2.
         if name == 'liquidity_30pct': kwargs['liquidity_mult'] = .3
-        if name in ('fixed_lock_5', 'adverse_exit_lock_5'): kwargs['blocked_sessions'] = sessions
+        if name in ('fixed_lock_5', 'adverse_exit_lock_5'): kwargs['blocked_sell_sessions'] = sessions
+        if name == 'full_halt_5': kwargs['blocked_sessions'] = sessions
         if name == 'execution_delay_2': kwargs['execution_delay'] = 2
         codes = []
         if name in ('missing_held_quotes_5', 'opening_gap_10pct', 'correlated_fall_5'):
             if sessions:
-                changed, codes = _stress_dataset(ds, base, sessions, name)
+                try:
+                    changed, codes = _stress_dataset(ds, base, sessions, name)
+                except (ValueError,KeyError,TypeError,ArithmeticError) as exc:
+                    results[name]=dict(status='failed',constraints_passed=False,reason=str(exc))
+                    continue
                 active_prepared = None
         needs_window = name not in ('cost_double', 'liquidity_30pct', 'execution_delay_2')
         if needs_window and (not sessions or (name in ('missing_held_quotes_5', 'opening_gap_10pct', 'correlated_fall_5') and not codes)):
@@ -303,23 +365,54 @@ def run_stress_suite(ds, cfg, spec, base, replay, *, prepared=None):
             results[name] = dict(status='failed', constraints_passed=False, reason=str(exc))
             continue
         summary = summarize_run(stress)
-        fills_during_lock = [f for f in stress.get('fills', []) if pd.Timestamp(f['date']).normalize() in sessions]
+        locks=('fixed_lock_5','adverse_exit_lock_5','full_halt_5')
+        fills_during_lock = [f for f in stress.get('fills', []) if pd.Timestamp(f['date']).normalize() in sessions
+                             and (name=='full_halt_5' or f['side']=='sell')]
         exercised = bool(stress.get('fills'))
         matching_exits = []
-        if name in ('fixed_lock_5', 'adverse_exit_lock_5'):
-            # Verify the baseline actually demanded an exit during this window;
-            # a lock with no requested sale is not an exit stress test.
-            baseline_exit_ids = {f['order_id'] for f in base.get('fills', [])
-                                 if f['side'] == 'sell' and pd.Timestamp(f['date']).normalize() in sessions}
-            matching_exits = [o for o in stress.get('orders', []) if o['side'] == 'sell'
-                              and o['order_id'] in baseline_exit_ids and o['quantity'] > 0
-                              and pd.Timestamp(o['signal_date']).normalize() < sessions[-1]]
+        rejections=stress.get('corporate_action_events',[])
+        matching_rejections=[]
+        if name in locks:
+            # Orders can receive different IDs once paths diverge. Dated actual
+            # execution attempts establish that a sell was due and was blocked;
+            # the final order reason may already be cleared by a later fill.
+            orders={o['order_id']:o for o in stress.get('orders',[])}
+            reason='unknown_or_halted_open' if name=='full_halt_5' else 'stress_sell_lock'
+            for event in rejections:
+                if (event.get('type')!='execution_rejected' or event.get('side')!='sell'
+                    or event.get('reason')!=reason or event.get('remaining',0)<=0
+                    or pd.Timestamp(event['date']).normalize() not in sessions):continue
+                order=orders.get(event.get('order_id'))
+                if (order and order['side']=='sell' and order['quantity']>0
+                    and order['instrument_id']==event.get('instrument_id')
+                    and pd.Timestamp(order['signal_date'])<pd.Timestamp(event['date'])
+                    and (not order.get('execute_not_before') or pd.Timestamp(order['execute_not_before'])<=pd.Timestamp(event['date']))):
+                    matching_rejections.append(event)
+            matching_ids={e['order_id'] for e in matching_rejections}
+            matching_exits=[orders[i] for i in sorted(matching_ids)]
             exercised = bool(matching_exits)
-        constraints = summary['accounting']['passed'] and not (name in ('fixed_lock_5', 'adverse_exit_lock_5') and fills_during_lock)
+        elif name in ('missing_held_quotes_5','opening_gap_10pct','correlated_fall_5'):
+            held_states=[s for s in stress.get('account',[]) if pd.Timestamp(s['date'])<sessions[0]]
+            exercised=bool(held_states and set(held_states[-1]['quantities'])&set(codes))
+            if name=='opening_gap_10pct':
+                exercised=exercised and any(e.get('actual_open_ratio',1.)<1. for e in
+                    changed.manifest.get('stress_variant',{}).get('price_impacts',{}).values())
+            if name=='missing_held_quotes_5':
+                exercised=exercised and any(str(e.get('reason','')).startswith('stale_') and
+                    pd.Timestamp(e['date']).normalize() in sessions for e in stress.get('data_issues',[]))
+        malformed=[e for e in rejections if e.get('type')=='execution_rejected' and
+            e.get('instrument_id') in codes and e.get('reason') in
+            ('derived_limit_mismatch','derived_open_outside_rule_bounds','unverified_derived_limit_rule')
+            and pd.Timestamp(e['date'])>=sessions[0]] if sessions else []
+        constraints = summary['accounting']['passed'] and not (name in locks and fills_during_lock) and not malformed
         results[name] = dict(status='completed' if exercised else 'not_exercised',
             constraints_passed=bool(constraints and exercised), window=[str(x.date()) for x in sessions],
-            ex_post_window=name != 'fixed_lock_5' and needs_window, held_codes=codes,
-            matching_exit_request=exercised, run=summary, run_id=stress['run_id'],
+            ex_post_window=name in ('adverse_exit_lock_5','missing_held_quotes_5','opening_gap_10pct','correlated_fall_5'), held_codes=codes,
+            scenario_exercised=exercised,matching_exit_request=bool(matching_exits) if name in locks else None,
+            run=summary, run_id=stress['run_id'],
+            lock_scope='all_sides' if name=='full_halt_5' else 'sell_only' if name in locks else None,
+            rejection_observations=matching_rejections,invalid_stress_rejections=malformed,
+            price_stress_evidence=changed.manifest.get('stress_variant') if changed is not ds else None,
             requested_exit_orders=len(matching_exits), drawdown_target=.20 if spec['risk_policy']=='P0' else .25,
             risk_target_met=bool(summary.get('conditional_metrics') and
                 summary['conditional_metrics']['max_drawdown'] >= (-.20 if spec['risk_policy']=='P0' else -.25)))
@@ -489,5 +582,31 @@ def run_comparison(manifest, output, *, start='2020-01-02', end='2026-06-30',
             lines.append(f"| {name} | {outcomes[name]['status']}: {outcomes[name].get('reason', '')} | — | — | — | — | — |")
     lines += ['', '因果配对、20/60日分块家族区间、DSR实测矩、压力结果及未通过原因见 summary.json。',
               '100只股票的18.82%参考按独立权限核验；复原状态与证据见references，不与主策略直接排名。']
+    lines += ['', '## 账户路径与执行诊断', '',
+              '| 配置 | 最差完整半年 | 最深回撤恢复 | 期末仍在回撤 | 最大单股/行业 | 日频群组 | 年化双边换手 | 卖单完成中位天数/未完数量 |',
+              '|---|---|---|---|---|---|---|---|']
+    for name in ARMS:
+        diagnostic = summaries.get(name,{}).get('account_diagnostics',{})
+        if not diagnostic or diagnostic.get('status')=='no_account': continue
+        half = diagnostic['halfyear_returns']['worst_complete']
+        half_text = f"{half['period']} {half['net_return']:.2%}" if half else '完整半年不足'
+        recovery = diagnostic['drawdown_recovery']
+        deepest = recovery['deepest']
+        recovery_text = (f"{deepest['peak_to_recovery_sessions']}交易日" if deepest['recovered'] else
+                         f"未恢复，已{deepest['elapsed_sessions']}交易日") if deepest else '未发生回撤'
+        concentration = diagnostic['realized_concentration']
+        def maximum_text(field):
+            value = concentration[field]['maximum']
+            if value is None: return '不可计算'
+            return f'{value:.2%}' + ('（部分日期）' if concentration[field]['status']=='partial' else '')
+        group_text = maximum_text('group') if concentration['group']['status']=='complete' else '覆盖不足' if concentration['group']['status']=='partial' else '不可计算'
+        turnover = diagnostic['turnover']['annualized_two_way']
+        turnover_text = f'{turnover:.2f}倍' if turnover is not None else '不可计算'
+        exits = diagnostic['sell_completion']['all_sells']
+        duration = f"{exits['completed_median_sessions']:g}" if exits['completed_median_sessions'] is not None else '—'
+        lines.append(f"| {name} | {half_text} | {recovery_text} | {'是' if recovery['unrecovered_at_end'] else '否'} | {maximum_text('single_security')} / {maximum_text('industry')} | {group_text} | {turnover_text} | {duration} / {exits['pending_orders']} |")
+    lines += ['', '换手=各日实际买卖成交额/前收盘净值之和×252/账户交易日数，含首次建仓；行业集中度按每日真实市值/NAV，UNKNOWN单列归组。',
+              '回撤恢复从前高计交易日；未恢复时长截至末次账户估值。卖单完结不等于整只股票清仓，取消/替换与待执行分开统计。',
+              '没有保存每日真实群组划分时明确不可计算，不将月度群组前填。完整逐日覆盖、半年度收益与逐单耗时见account_diagnostics。']
     (root / 'RESULTS.md').write_text('\n'.join(lines) + '\n')
     return summary
