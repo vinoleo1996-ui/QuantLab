@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+output/
+data/a_stock/*.parquet
+data/us_stock/*.parquet
+data/fundamentals/*.parquet
+data/bench/*.parquet
+.DS_Store
+.venv2/
+.workbuddy-ai/
+data/research/
+data/**/versions/

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantLab 修复方案评审 · 2026-09-24</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --line:#2a3038;
+    --fg:#e6e9ee; --fg2:#a8b0bd; --fg3:#6f7887;
+    --red:#ff5c5c; --amber:#ffb648; --green:#3ddc97; --blue:#5aa9ff; --purple:#b48cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:56px 32px 96px}
+  h1{font-size:29px;line-height:1.35;margin:0 0 10px;letter-spacing:-.4px}
+  h2{font-size:21px;margin:56px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:16px;margin:32px 0 10px}
+  .meta{color:var(--fg3);font-size:13px;margin-bottom:8px}
+  .lead{color:var(--fg2);font-size:14.5px;margin:0 0 28px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:#ffd479;border:1px solid var(--line)}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;color:#cfe3ff;line-height:1.6}
+  .verdict{background:linear-gradient(180deg,#1b2130,#161a21);border:1px solid #33405a;
+    border-left:3px solid var(--blue);border-radius:10px;padding:20px 24px;margin:0 0 8px}
+  .verdict h3{margin:0 0 10px;font-size:15px;color:var(--blue);letter-spacing:.3px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:16px 0}
+  .card.ok{border-left:3px solid var(--green)}
+  .card.bad{border-left:3px solid var(--red)}
+  .card.warn{border-left:3px solid var(--amber)}
+  .card h3{margin:0 0 10px}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--fg2);font-weight:600;font-size:12.5px;background:var(--panel2);white-space:nowrap}
+  td.num{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .ok-t{color:var(--green);font-weight:600}
+  .no-t{color:var(--red);font-weight:600}
+  .mid-t{color:var(--amber);font-weight:600}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--fg2);font-family:var(--mono);white-space:nowrap}
+  .tag.p0{color:var(--red);border-color:#5a2a2a;background:#241618}
+  .tag.p1{color:var(--amber);border-color:#5a462a;background:#241f16}
+  .tag.ok{color:var(--green);border-color:#2a5a44;background:#16241d}
+  ul{margin:10px 0;padding-left:22px}
+  li{margin:6px 0}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}
+  .kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px}
+  .kpi .v{font-family:var(--mono);font-size:19px;font-weight:600;letter-spacing:-.5px}
+  .kpi .k{font-size:11.5px;color:var(--fg3);margin-top:3px}
+  hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+  .foot{color:var(--fg3);font-size:12.5px;margin-top:40px;line-height:1.9}
+  .hl{background:#2a2010;color:#ffd479;padding:1px 5px;border-radius:4px;font-weight:600}
+  .strike{color:var(--fg3);text-decoration:line-through}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="meta">QuantLab · 修复方案评审 · 2026-09-24 · 评审依据：本仓已复现证据 + 源码逐条核对</div>
+<h1>这份方案值得做，但缺了最关键的一步</h1>
+<p class="lead">我逐条核对了这份《QuantLab 核心修复与策略升级方案》，并把它和我上一轮独立复现出的证据做了对照。结论：<strong>这是本轮三份材料里最靠谱的一份</strong>——排序对、覆盖广、多处细节比两位同事更准。但它有一个结构性缺陷，会让前两个月的投入有较大概率白做。</p>
+
+<div class="verdict">
+<h3>裁定</h3>
+<p><strong>方向正确，可以照做，但必须先插一个 1–3 天的证伪实验在前面。</strong></p>
+<p>方案把"账本 / 数据 / 时序"排在"新因子"之前，这个顺序是对的；它对已复现缺陷的覆盖也比两位同事更全（F03/F06/F07/F10 都被它间接修掉）。但它<strong>没有回答那个最便宜、最致命的问题</strong>：在花三个月建 PIT 池、公告链路、ETF 穿透之前——<span class="hl">这个池子在这个成本下，到底有没有可提取的横截面 alpha？</span></p>
+<p>方案的第二阶段（残差趋势、行业扩散、公告模块、防踩踏、新配权）全部建立在"存在 alpha 只是没被正确度量"这个假设上。<strong>这个假设没有被检验过，而检验它只需要几天。</strong></p>
+<p><strong>本报告 §4.0 已撤回初稿里"测不出就说明池里没 alpha、就该换池子"的写法</strong>——那是"无法拒绝零假设"被当成"接受零假设"，而且换池是一个需要自己证据的独立假设，不是推论。</p>
+<p>另外，方案还漏掉了 6 条已复现缺陷 / 工程前提，其中一条会让方案自己倡导的"参数冻结"直接失效。</p>
+</div>
+
+<div class="kpi">
+  <div><div class="v" style="color:var(--red)">37 / 83</div><div class="k">config.py 里从未被读取的参数字段</div></div>
+  <div><div class="v" style="color:var(--amber)">0</div><div class="k">仓库里的 .git（无法版本冻结/回滚）</div></div>
+  <div><div class="v" style="color:var(--red)">0 行</div><div class="k">ETF 相关代码（方案要配 3 只 ETF）</div></div>
+  <div><div class="v" style="color:var(--amber)">~5</div><div class="k">36/6/6 滚动能拿到的最大不重叠测试窗</div></div>
+</div>
+
+<h2>一、方案对的地方（我给证据）</h2>
+
+<table>
+<tr><th>方案条目</th><th>我的核对结果</th><th>裁定</th></tr>
+<tr>
+  <td>修复因子权重的日期索引错误，及拥挤过滤的索引与方向错误</td>
+  <td>我已复现：<code>engine.py:184</code> 使 730/730 期权重全 NaN、得分恒为常数；拥挤过滤的索引 bug 在 <code>experts.py:177</code>，方向反了在 <code>engine.py:220</code></td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>"删除'独立专家已经有效'的默认假设"，每个模块必须通过分数扰动 / 信息移除 / 持仓归因验证</td>
+  <td>实测：把专家分数换成常数 0.5、权重固定动量 100%，逐日收益与持仓权重差 <strong>恰好为 0</strong>。方案的验收标准正是唯一能抓到它的标准</td>
+  <td class="ok-t">准确，且是全场最好的验收条款</td>
+</tr>
+<tr>
+  <td>"取消今天市值 TOP40 回放六年作为有效研究入口"</td>
+  <td>实测池 = 今日新浪实时快照按<strong>当前</strong>流通市值取前 40（含中际旭创、新易盛、寒武纪、长鑫科技）。这是全部收益数字的根</td>
+  <td class="ok-t">这是整份方案里最重要的一条</td>
+</tr>
+<tr>
+  <td>腾讯数据：区分"明确无交易"和"字段未知"，未知不能直接判停牌也不能直接放行</td>
+  <td>实测 000858、600276 各 1454 行 <code>amount</code> 有效值为 <strong>0</strong>，source=tencent，整段被冻死。<code>limit_masks</code> 的 <code>fillna(0.0) <= 0</code> 把"未知"和"无量"混为一谈</td>
+  <td class="ok-t">比两位同事的说法都更严谨</td>
+</tr>
+<tr>
+  <td>"样本末日订单保持待执行"</td>
+  <td>存档末笔 signal = exec = <strong>2026-09-24</strong>，同日回填。方案直接修掉 F06</td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>"无信号日继续估值、更新风险，不能跳过旧仓损益"</td>
+  <td><code>engine.py:199</code> 的 <code>continue</code> 会整月跳过旧仓损益。方案直接修掉 F07</td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>"求解失败时保留可验证的现有持仓、取消新增风险并报告原因，禁止退回违反约束的等权组合"</td>
+  <td><code>portfolio.py:50</code> <code>w = res.x if res.success else x0</code>——失败就返回等权，全银行候选时可给出 100% 银行。方案直接修掉 F10</td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>"订单在新旧持仓并集上计算"</td>
+  <td>实测索引不一致时全换仓的 turnover 记为 <strong>0.0000</strong>（真值 1.0、费用 0.70%）。方案同时修掉 F02 与"信号只遍历新权重导致卖单缺失"</td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>"只有日线数据时，不能证明开盘成交容量；必须用分钟数据或实际成交记录校准执行偏差"</td>
+  <td>仓库无分钟数据链路，成本模型是固定 30bp 单边。<strong>两位同事都没提这一条</strong></td>
+  <td class="ok-t">本轮唯一的新增洞察</td>
+</tr>
+<tr>
+  <td>"进入前 10% 才新增，连续两次跌出前 30% 才普通退出"</td>
+  <td>现状 <code>turnover_rank_thresh=5</code> 号称"排名变动不足 5 名不替换"，实际只是把候选数从 23 扩到 28（<code>engine.py:209</code>）。方案这个规则是真正可实现的替换</td>
+  <td class="ok-t">准确</td>
+</tr>
+<tr>
+  <td>回撤逐档恢复需"低于阈值 3pp 且持续 5 个交易日"</td>
+  <td>现状风控无状态记忆、且只在月末取样一次（<code>engine.py:234</code>）。方案的滞回设计确实更好</td>
+  <td class="ok-t">改进成立</td>
+</tr>
+<tr>
+  <td>"不能把原 29% 直接称为幸存者偏差的量化值"</td>
+  <td>与我上轮裁定一致：严格账本下真实月度等权 28.43%、买入持有 32.62%，29.03% 是近似值不是"量化值"</td>
+  <td class="ok-t">与我的结论一致</td>
+</tr>
+<tr>
+  <td>拒绝伪造"2026 年增星 TOP10"，明确标注接口数据缺失</td>
+  <td>—</td>
+  <td class="ok-t">诚实，加分</td>
+</tr>
+</table>
+
+<h2>二、方案的问题</h2>
+
+<div class="card bad">
+<h3><span class="tag p0">结构性</span> 2.1 缺少最便宜的证伪实验，把"证伪"和"重建"打包进了一个五阶段路线图</h3>
+<p>方案的第一阶段是 ~25 个工程条目（账本、数据契约、PIT 池、公司行动、ETF 规则、指数独立接口…），第二阶段是新因子模块、公告模块、防踩踏、新配权。全部做完是<strong>数人月</strong>的规模。</p>
+<p>但在投入之前，有一个问题必须先有答案，而且它只需要几天：</p>
+<pre>在 40 只大盘股的池子里，用 20 个交易日的横截面价量信号，
+扣掉单边 30bp 滑点 + 双边佣金 + 印花税之后，
+还剩多少可提取的 alpha？</pre>
+<p>已知的强证据是：<strong>该池子的被动收益是 28–33%/年，而"策略"只有 14.6%</strong>（相对同池月度等权年化 −10.76%，相对买入持有 −13.57%）。方案自己也承认"当前结果不能用来判断动量、价值或专家集成是否有效"——那么下一步就不该是"重建一整套系统去度量它"，而该是<strong>先构造一个能一次判死的对照</strong>。</p>
+<p><strong>缺的对照（方案里完全没有）：匹配的随机打分零假设。</strong>把打分层替换为随机截面分数、下游整条管线逐位不动，跑 ≥500 个种子，得到年化/回撤/换手/未成交的分布，再看修复索引后的策略落在哪个位置。构造与判读见 §4.2 与 §4.3。</p>
+<p><strong>能得到的结论只有一条：</strong>这套排序机制相对随机选择有没有可检测的增量。</p>
+<ul>
+  <li>不可区分 → 停止在这段数据上继续调这套机制；措辞是"<strong>未证明优于随机选择</strong>"，<strong>不是</strong>"池内没有可提取收益"，也<strong>推不出</strong>"换池会更好"。</li>
+  <li>显著超出 → 支持"该池条件下存在选股增量"，但结论仍以<em>有偏池</em>为条件，幸存者偏差未解决。</li>
+</ul>
+<p>我上一轮已经证明池宽 ±1 只就让人工年化从 13.55% 摆到 16.00%——<strong>这个零假设分布大概率很宽</strong>，所以必须先测它，否则"修复后的 12.88%"会被误读成"策略 alpha 接近 13%"。（本报告初稿在这里写过"测不出就该换池子"，已在 §4.0 撤回。）</p>
+</div>
+
+<div class="card bad">
+<h3><span class="tag p0">事实遗漏</span> 2.2 方案漏掉的 6 条已复现缺陷 / 工程前提</h3>
+
+<table>
+<tr><th>#</th><th>遗漏项</th><th>证据</th><th>为什么方案必须收进去</th></tr>
+<tr>
+  <td>1</td>
+  <td><strong>37 / 83 个配置字段从未被任何代码读取</strong></td>
+  <td>逐字段扫描 <code>config.py</code> 的 83 个 dataclass 字段，全仓（除 config.py）零引用的有 37 个，含 <code>init_cash</code>、<code>seed</code>、<code>benchmark_a</code>、<code>a_market_price_stop</code>、<code>lw_shrinkage</code>、<code>ic_window</code>、全部因子窗口、<code>rebalance_rule</code>、<code>min_trade_value</code>、<code>weight_floor</code>…</td>
+  <td class="no-t">方案的核心机制之一是"参数须随版本冻结"。<strong>但现状是 45% 的参数是装饰品：改它没有任何行为变化。</strong>不先立"每个参数必须有读取点 + 行为测试"这条规矩，方案新增的那张参数表（20 只 / 6% / 25% / 30% / 2% / 14%…）会重复同一个失败模式</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><strong>基准序列未保存，regime 路径直接决定结果</strong></td>
+  <td>存档 15.2515% / −16.5197% 只在 <code>gross_scale ≡ 1.0</code> 时被精确复现；用代码写明的退化基准（<code>engine.py:149</code> 候选池均价）会触发 6 次深熊降仓 → 14.62%。<code>data/bench/</code> 为空</td>
+  <td class="mid-t">方案只说"保存 data_version / run_id"。这条要单列成 P0：<strong>基准序列必须随 run 落盘，regime 状态必须可重放</strong>。否则"复现"永远做不到</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><strong>指数通过个股接口拉取</strong></td>
+  <td><code>sources.py:358</code> 用 <code>_a_daily("000300")</code> 取沪深300；<code>_baostock_daily</code> 会按 <code>startswith(('6','5','9'))</code> 判成 <code>sz.000300</code></td>
+  <td class="mid-t">方案第二关要求"具有正确身份与收益口径的宽基指数对照"，但没点出根因。指数必须走独立接口 + 独立资产类型</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><strong>仓库没有 <code>.git</code></strong></td>
+  <td><code>git status</code> → <code>fatal: not a git repository</code></td>
+  <td class="mid-t">方案的"须随版本冻结""旧结果标记为历史未验证结果""改动前记录 hash"全部<strong>无法执行</strong>。这是第 0 步</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><strong><code>requirements.txt</code> 缺 baostock 与 curl_cffi</strong></td>
+  <td>只有 pandas/numpy/pyarrow/scipy/matplotlib/sklearn/flask/akshare/yfinance</td>
+  <td class="mid-t">README 宣称的多后端 fallback（baostock / 东财 curl_cffi）<strong>照 requirements 装不起来</strong>。方案依赖的数据契约建立在这个链路上</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><strong>基本面 / 基准数据目录是空的</strong></td>
+  <td><code>data/fundamentals/</code> 与 <code>data/bench/</code> 均为空；<code>fetch_fundamental</code> 用 <code>stock_financial_analysis_indicator</code>，返回的是<strong>报告期</strong>不是披露日</td>
+  <td class="mid-t">方案第二阶段"公告模块"要求 PIT 披露时间，但起点是零。<strong>且现有财务接口给不出披露日</strong>——这是硬阻塞，方案没说</td>
+</tr>
+</table>
+</div>
+
+<div class="card warn">
+<h3><span class="tag p1">归类错误</span> 2.3 有 4 项"策略变更"被写成了"修复/默认参数"</h3>
+<p>这些不是纠正缺陷，是新假设。方案在第三关用消融把关是对的，但在 §三.4 把它们列成"初始研究参数，须随版本冻结"，读者会当成已定论。</p>
+<table>
+<tr><th>条目</th><th>性质</th><th>为什么不能算"修复"</th></tr>
+<tr>
+  <td>每周评估机会（替代月度）</td>
+  <td class="mid-t">策略变更</td>
+  <td>而且它不是开关：<code>rebalance_rule</code> / <code>rebalance_n_weeks</code> 在 config 里声明了，但 <code>engine.py:115-118</code> <strong>硬编码月末</strong>（<code>to_period("M").last()</code>），从不读取这两个字段。改周频要重写调仓日生成 + 成本模型 + 换手估计</td>
+</tr>
+<tr>
+  <td>20 个交易日预测期 / 残差趋势 / 行业扩散 / 上涨质量</td>
+  <td class="mid-t">新假设</td>
+  <td>方案自己也说"行业扩散和残差趋势可能高度相关，先作为一个模块验证"——但整体仍以"价量阶段"名义出现在路线图里，容易被当成既有能力的修复</td>
+</tr>
+<tr>
+  <td>最多 3 只 ETF、单只上限 20%、穿透暴露计入行业上限</td>
+  <td class="mid-t">新建链路</td>
+  <td>实测全仓 grep：ETF 只出现在 <code>sources.py:7</code> 的一行 docstring。<strong>零代码、零数据源、零回测支持。</strong>穿透持仓的 PIT 数据在日频上根本拿不到，方案用"未知穿透暴露单独保守归组"一句带过</td>
+</tr>
+<tr>
+  <td>回撤档位 10 / 15 / 18 / 20 + 逐档滞回恢复</td>
+  <td class="mid-t">参数变更</td>
+  <td>现状是 10 / 15 / 22。方案把 L4 从 22% 提前到 20%、新增 18% 档，并引入状态记忆。<strong>这是好事，但要作为"新规则"单独消融</strong>，不能混在"修复风控采样频率"里一起上</td>
+</tr>
+</table>
+</div>
+
+<div class="card warn">
+<h3><span class="tag p1">功效</span> 2.4 第三关的统计设计在 6 年数据上功效不足，方案没说</h3>
+<p>36 个月训练 / 6 个月验证 / 6 个月测试，向前滚 6 个月。2020–2026 共 72 个月 → 最多约 <strong>5 个</strong>不重叠测试窗。方案要求"至少三个不重叠测试段，且在不少于三分之二的测试段取得正的扣费增量"——在最坏情况下，<strong>结论由 2 个测试段决定</strong>。</p>
+<p>叠加"每代最多评估 12 组配置"，多重检验校正在 5 个窗口上几乎没有分辨力。方案已经很诚实地写了"证据不足时维持'未证明有效'"，但应该再往前一步：<strong>明确写出"以 6 年日线数据，本设计大概率无法把真实增量与噪声区分开"</strong>，并把结论的默认值设为"未证明有效"而不是"待验证"。</p>
+<p>正确做法不是放宽门槛，而是：把数据切成更细的滚动窗（提高窗数）、或改用日频标签（提高每窗观测数）、或<strong>接受"无法在历史数据上判定"并把唯一验证路径放到前向模拟</strong>。</p>
+</div>
+
+<div class="card warn">
+<h3><span class="tag p1">装饰</span> 2.5 GitHub 参考章节不产生任何可执行内容</h3>
+<p>10 个项目 × 1 行，没有具体机制、没有文件路径、没有许可证结论、没有集成成本。作者自己承认"不是增星排名，也不是收益排名"，且明确说"引入具体代码或依赖前，逐项检查许可证与维护成本"——<strong>也就是说这一节目前是不可执行的。</strong></p>
+<p>建议砍到 3 条并写清落点：LEAN（账本守恒模型的具体数据结构）、Freqtrade（未来泄露检测的截断重算算法）、Qlib（实验记录与数据快照的目录契约）。其余 7 条删除——它们不改变任何一行代码。</p>
+</div>
+
+<h2>三、修订建议</h2>
+
+<table>
+<tr><th>动作</th><th>对象</th><th>理由</th></tr>
+<tr><td class="ok-t">保留并前置</td><td>可信引擎（账本 / 数据契约 / 时序）</td><td>顺序本来就对，只是要砍到最小可用集</td></tr>
+<tr><td class="ok-t">保留并前置</td><td>可信对照（买入持有 / 真实月度等权 / 波动匹配 / 宽基）</td><td>这是判断一切的前提</td></tr>
+<tr><td class="no-t">新增（P0，插在最前面）</td><td><strong>同池随机篮子零假设分布</strong>（≥200 次，同风险叠加）</td><td>方案缺的判据。决定第二阶段是否值得做</td></tr>
+<tr><td class="no-t">新增（P0）</td><td>参数读取点审计：83 个字段逐个确认有读取点 + 行为测试，否则删除</td><td>否则方案自己的"参数冻结"是空的</td></tr>
+<tr><td class="no-t">新增（P0）</td><td>基准序列随 run 落盘 + regime 状态可重放</td><td>15.25% 不可复现的直接原因</td></tr>
+<tr><td class="no-t">新增（第 0 步）</td><td><code>git init</code> + 基线提交 + 补 <code>requirements.txt</code></td><td>版本冻结与回滚的前提</td></tr>
+<tr><td class="mid-t">降级为独立假设</td><td>周频调仓 / 新因子模块 / ETF 链路 / 回撤档位</td><td>单独消融，不与缺陷修复同批上线</td></tr>
+<tr><td class="no-t">删除或压缩</td><td>GitHub 十项目章节</td><td>不可执行</td></tr>
+<tr><td class="mid-t">改写</td><td>第三关：明确写出历史数据的功效上限，默认结论设为"未证明有效"</td><td>避免把"没测出来"读成"待验证"</td></tr>
+</table>
+
+<h2>四、最小证伪切片（含对本报告上一版的撤回）</h2>
+
+<div class="card bad">
+<h3><span class="tag p0">撤回</span> 4.0 我上一版的判据写错了</h3>
+<p>本报告初稿在这里写的是：</p>
+<pre><span class="strike">若策略年化落在随机篮子分布的 90% 分位以内:
+    -> 该池内无可提取的横截面 alpha
+    -> 下一步是「换池子」，不是「换因子」</span></pre>
+<p><strong>这个推论不成立，撤回。</strong>三处错误：</p>
+<ul>
+  <li><strong>把"没测出差异"当成"差异不存在"。</strong>无法拒绝零假设 ≠ 接受零假设。它只能说明<em>这套排序机制</em>相对随机选择没有可检测的增量，推不出"池里没有可提取的收益优势"——池里可能有用别的规则能提出来、而这套规则提不出来的结构。</li>
+  <li><strong>"所以该换池子"是无根据的跳跃。</strong>换池是一个<em>独立的、需要自己证据的假设</em>，不是前一个检验的推论。更宽的池子同时带来更多噪声、更多多重检验、更差的流动性和更高的滑点，不是免费的。</li>
+  <li><strong>零假设没有被指定。</strong>"随机篮子"是个含糊说法。若不匹配持仓数、资金、费用、风控和可交易条件，测出来的差异里混着配权机制、风险叠加和执行假设，无法归因到"选股"。</li>
+</ul>
+</div>
+
+<div class="card warn">
+<h3>4.1 这个实验能证明什么、不能证明什么</h3>
+<table>
+<tr><th>观测结果</th><th>可以推出</th><th>不能推出</th></tr>
+<tr>
+  <td>策略 ≤ 匹配零假设分布的主体</td>
+  <td>当前排序机制<strong>在这个候选集内</strong>、在这段数据上，相对随机选择无可检测的选股增量。<br>→ 继续调这套机制没有依据。</td>
+  <td class="no-t">池内不存在可提取收益<br>换池会更好<br>策略没有 alpha<br>方案第二阶段的任何模块无效</td>
+</tr>
+<tr>
+  <td>策略 &gt; 匹配零假设的高分位</td>
+  <td>在该池条件下存在可检测的选股增量</td>
+  <td class="no-t">实盘可实现<br>换池会更好<br>（零假设<strong>以有偏池为条件</strong>，即使通过也仍被幸存者偏差污染）</td>
+</tr>
+</table>
+<p><strong>两个结构性限制必须写在实验报告里：</strong></p>
+<ul>
+  <li><strong>条件性。</strong>零假设以"今日快照 TOP40"这个池为条件。它检验的是<em>选股机制</em>，不是<em>池子的机会集</em>。即使策略显著胜出，结论也仍被幸存者偏差污染。</li>
+  <li><strong>单侧。</strong>这是单侧检验。不显著只是"没有证据支持继续投入这套机制"，不是"证明机制无效"。</li>
+</ul>
+</div>
+
+<div class="card ok">
+<h3>4.2 匹配的零假设怎么构造（正好满足你提的匹配要求）</h3>
+<p>不要"随机抽 27 只再自己配权"——那样差异里混进了配权机制。正确做法是<strong>只随机化打分层，其余整条管线逐位不动</strong>：</p>
+<pre>把 composite_score 的输出替换为 i.i.d. 随机截面分数（每个种子一套）
+其余全部保持不变：
+  候选截取 + buffer 规则 -> 最小方差配权 -> 目标波动率缩放
+  -> 回撤分级叠加 -> 涨跌停/停牌掩码 -> 双边成本 -> T+1 开盘执行</pre>
+<p>这样<strong>持仓数、资金、费用、风险控制、可交易条件全部自动匹配</strong>，因为下游一行代码都没变。已知的对照：把分数换成<em>常数</em>0.5 时逐日收益差恰好为 0——随机分数版就是这个消融的"有分布"版本。</p>
+<p>注意两点：回撤叠加是<strong>路径依赖</strong>的，每个种子必须走自己的风控路径，不能共用一条；持仓只数会因掩码与止损而逐期波动，这一点也由构造自动匹配。</p>
+<p><strong>但"完全匹配"做不到，必须写明残余差异：</strong>整手约束、最低佣金、真实成交价在现有引擎里根本不存在（<code>min_trade_value</code>、<code>cost_rounding</code> 是死配置，见 §2.2）。<strong>在账本补齐之前，这个零假设只能在"权重空间"上匹配，不能在"成交空间"上匹配。</strong>所以它给出的结论强度，上限就是当前引擎的保真度。</p>
+</div>
+
+<div class="card warn">
+<h3>4.3 阈值怎么读（不要设 90% 硬门）</h3>
+<ul>
+  <li>报告 <code>p̂ = 年化 ≥ 策略的种子占比</code>，而不是"过/不过 90%"。在 p̂≈0.1 时，200 个种子的抽样误差约 ±2pp——<strong>把 0.10 当悬崖是错的</strong>。要分辨 p &lt; 0.05 需要 ≥500–1000 个种子。</li>
+  <li>2020–2026 已被反复查看（两位同事 + 我自己都在上面跑过对照），<strong>门槛必须按查看次数上浮</strong>，不能直接拿 90 分位当显著性线。</li>
+  <li>单点结论不可用：同时报告年化、回撤、换手、未成交四个维度的分布位置。策略可能年化落在中位、但回撤落在 20 分位——那是"低波 beta"，不是 alpha。</li>
+</ul>
+</div>
+
+<div class="card warn">
+<h3>4.4 什么才真正支持"换池子"（独立论据，不是上面的推论）</h3>
+<p>我上一版想表达但写错的直觉，正确的版本是一个<strong>仪器分辨率</strong>问题，与"别处有没有 alpha"无关：</p>
+<table>
+<tr><th>量</th><th>值</th></tr>
+<tr><td>截面股票数 n</td><td class="num">40</td></tr>
+<tr><td>单期 RankIC 零假设标准误 ≈ 1/√(n−1)</td><td class="num">0.160</td></tr>
+<tr><td>73 期均值 IC 的标准误</td><td class="num">0.019</td></tr>
+<tr><td>2σ 可分辨的最小 |均值 IC|</td><td class="num no-t">0.0375</td></tr>
+<tr><td>月频价量因子 RankIC 的现实量级</td><td class="num">0.02 – 0.05</td></tr>
+</table>
+<p><strong>结论：这个 40 只的截面只能勉强看见它要找的东西。</strong>这是"仪器不够灵敏"，不是"别处有 alpha"。两者导向的动作完全不同：前者是提高分辨率（扩池 / 提高频率 / 拉长样本），后者是"去别处找钱"。<strong>而扩池本身有代价</strong>（噪声、多重检验、小盘流动性、滑点），所以它是一个需要单独论证的假设，不是推论。</p>
+<p>顺带一个反证——<strong>池子并非没有可测结构</strong>。存档 IC 矩阵（73 期 × 11 因子）里：</p>
+<table>
+<tr><th>因子</th><th>均值 IC</th><th>t（n 期）</th><th>11 因子 Bonferroni 门槛 |t|&gt;2.79</th></tr>
+<tr><td><code>momentum_3m</code></td><td class="num">−0.0957</td><td class="num">−4.93 (68)</td><td class="ok-t">通过</td></tr>
+<tr><td><code>value_medium</code></td><td class="num">+0.0520</td><td class="num">+2.70 (69)</td><td class="mid-t">边缘未过</td></tr>
+<tr><td><code>momentum_trend</code></td><td class="num">−0.0361</td><td class="num">−1.87 (69)</td><td class="no-t">未过</td></tr>
+<tr><td><code>flow_turnover_low</code></td><td class="num">−0.0297</td><td class="num">−1.56 (71)</td><td class="no-t">未过</td></tr>
+<tr><td>其余 7 个</td><td class="num">|IC| ≤ 0.028</td><td class="num">|t| ≤ 1.4</td><td class="no-t">未过</td></tr>
+</table>
+<p>短期反转在这个大盘池里是<strong>可测的</strong>（t≈−4.9）。这进一步说明"池里没有东西"是错的结论——但 <strong>IC 可测 ≠ 扣费后组合收益为正</strong>：月度全换仓 × 单边 30bp 滑点 + 双边佣金 + 印花税，年化成本量级 3–7%，足以吃掉 IC≈0.05 的全部经济含义。这是两个必须分开量的问题。</p>
+</div>
+
+<div class="card ok">
+<h3>4.5 修正后的最小切片</h3>
+<ol>
+  <li><strong>修索引（1 行）</strong> — <code>engine.py:184</code> + <code>monitor.py:107</code>，加行为测试。已知结果：14.62% → 12.88%。</li>
+  <li><strong>建独立账本（约 150–250 行，新模块，不动原引擎）</strong> — 持股数 + 现金 + 成交 + 费用，逐日估值。用 5 个已复现的确定性反例做回归。这一步同时把 §4.2 的"残余不匹配"补掉。</li>
+  <li><strong>跑匹配零假设</strong> — 只随机化打分，下游逐位不动；≥500 个种子；报告 p̂ 与四个维度的分布位置。</li>
+  <li><strong>预先写下的判读规则（不是通过/不通过）</strong>：
+<pre>p̂ 大（策略与随机不可区分）
+    -> 停止在这段数据上继续调这套排序机制
+    -> 结论措辞：「未证明优于随机选择」，不是「池内无 alpha」
+    -> 若仍想继续，必须给出独立论据（如 4.4 的分辨率论证），
+       并为「扩池」单独立一个假设和检验
+
+p̂ 小（策略显著优于匹配随机）
+    -> 支持「该池条件下存在选股增量」
+    -> 但结论仍以有偏池为条件，幸存者偏差未解决
+    -> 下一步：补齐账本保真度（整手/最低佣金/真实成交），再做 PIT 池对照
+
+两种情形下都不成立的说法：
+    「证明了池内不存在可提取收益」「所以换池会更好」</pre></li>
+</ol>
+<p>方案第三关做的是"这个模块有没有增量"；这一片做的是"这套机制相对随机有没有增量"。<strong>两件事都要做，而且都不能替代对方。</strong></p>
+</div>
+
+<h2>五、一句话总结</h2>
+
+<div class="card warn">
+<p><strong>这份方案的工程质量远高于前两份 review，可以照做——但要把顺序再往前推一格。</strong></p>
+<p>它想在正确度量之后判断 alpha 是否存在；更好的做法是<strong>先花几天测一下"这套选股机制相对随机选择有没有增量"</strong>，再决定要不要投入数人月去建正确的度量系统。<span class="hl">注意这里能得到的只是"未证明优于随机"，不是"池里没有 alpha"</span>——两者导向的动作不同（见 §4.0 撤回说明）。</p>
+<p>另外三件事必须做在方案前面，否则方案自己会失效：<span class="hl">37/83 的参数是装饰品</span>、<span class="hl">仓库没有 git</span>、<span class="hl">基准序列没落盘</span>。这三条不解决，"参数冻结""版本对比""结果复现"都只是口号。</p>
+</div>
+
+<hr>
+<div class="foot">
+<strong>本次评审的核对方式</strong>：逐条读方案 → 对每条能落到代码的断言做源码/数据核对 → 对已复现缺陷复用上一轮 <code>scripts/adjudicate_20260924.py</code> 的证据 → 新增两项全仓扫描（配置字段读取点、ETF 链路存在性）。<br><br>
+<strong>上一轮证据</strong>：<code>docs/ADJUDICATION_2026-09-24.html</code> · <code>output/adjudication_20260924/evidence.json</code><br>
+<strong>本轮新增核对</strong>：<code>config.py</code> 83 字段逐个扫描 → 37 个零引用；<code>grep</code> 全仓 ETF/instrument → 仅 1 行 docstring；<code>git status</code> → 非 git 仓库；<code>data/bench</code>、<code>data/fundamentals</code> → 空目录。<br><br>
+<strong>证据边界</strong>：本评审未执行方案的任何改造，所有数字均来自源码核对与上一轮已复现实验。方案中"目标年化波动率维持 14%""60 万元起始资金"与 <code>config.py</code> 一致；但 <code>init_cash</code> 与 <code>target_positions</code> 均<strong>从未被读取</strong>，故"60 万 / 20 只"在当前引擎里并不构成真实约束。
+</div>
+
+</div>
+</body>
+</html>

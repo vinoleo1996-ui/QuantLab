@@ -1,0 +1,14 @@
+=== 1. 重建面板 & 复现回测 ===
+面板: 40 只; 候选 meta: 40 行
+[复现] total_return=1.1925 annual_return=0.1462 annual_vol=0.1308 sharpe=1.1179 max_drawdown=-0.1780
+[pkl ] total_return=1.2631 annual_return=0.1525 annual_vol=0.1331 sharpe=1.1456 max_drawdown=-0.1652
+
+=== 2. 池基线: 同一40池等权月度调仓(含费用/掩码) ===
+total_return=3.3335 annual_return=0.2903 annual_vol=0.1856 sharpe=1.5637 max_drawdown=-0.1808
+
+=== 3. 买入持有: 全池等权首日买入持有 ===
+total_return=3.1384 annual_return=0.2800 annual_vol=0.1912 sharpe=1.4641 max_drawdown=-0.1992
+
+=== 4. 数据不足/冻结股票检查 ===
+amount 全为0(不可交易)的股票: ['600276', '000858']
+turnover 全为NaN的股票: ['600276', '000858']

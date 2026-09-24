@@ -1,0 +1,5 @@
+# Optional live public-data adapters; core offline replay does not import these.
+-r requirements.txt
+baostock>=0.8.9
+curl_cffi>=0.7
+requests>=2.32.4

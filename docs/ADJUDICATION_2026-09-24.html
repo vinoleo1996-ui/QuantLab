@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantLab 两份 Review 裁定报告 · 2026-09-24</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --line:#2a3038;
+    --fg:#e6e9ee; --fg2:#a8b0bd; --fg3:#6f7887;
+    --red:#ff5c5c; --amber:#ffb648; --green:#3ddc97; --blue:#5aa9ff; --purple:#b48cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:56px 32px 96px}
+  h1{font-size:29px;line-height:1.35;margin:0 0 10px;letter-spacing:-.4px}
+  h2{font-size:21px;margin:56px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:16px;margin:32px 0 10px;color:var(--fg)}
+  .meta{color:var(--fg3);font-size:13px;margin-bottom:8px}
+  .lead{color:var(--fg2);font-size:14.5px;margin:0 0 28px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:#ffd479;border:1px solid var(--line)}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;color:#cfe3ff;line-height:1.6}
+  .verdict{background:linear-gradient(180deg,#1b2130,#161a21);border:1px solid #33405a;
+    border-left:3px solid var(--blue);border-radius:10px;padding:20px 24px;margin:0 0 8px}
+  .verdict h3{margin:0 0 10px;font-size:15px;color:var(--blue);letter-spacing:.3px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:16px 0}
+  .card.ok{border-left:3px solid var(--green)}
+  .card.bad{border-left:3px solid var(--red)}
+  .card.warn{border-left:3px solid var(--amber)}
+  .card h3{margin:0 0 10px}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--fg2);font-weight:600;font-size:12.5px;letter-spacing:.2px;
+    background:var(--panel2);white-space:nowrap}
+  td.num{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .ok-t{color:var(--green);font-weight:600}
+  .no-t{color:var(--red);font-weight:600}
+  .mid-t{color:var(--amber);font-weight:600}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--fg2);font-family:var(--mono)}
+  .tag.p0{color:var(--red);border-color:#5a2a2a;background:#241618}
+  .tag.p1{color:var(--amber);border-color:#5a462a;background:#241f16}
+  .tag.ok{color:var(--green);border-color:#2a5a44;background:#16241d}
+  ul{margin:10px 0;padding-left:22px}
+  li{margin:6px 0}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}
+  .kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px}
+  .kpi .v{font-family:var(--mono);font-size:19px;font-weight:600;letter-spacing:-.5px}
+  .kpi .k{font-size:11.5px;color:var(--fg3);margin-top:3px}
+  .quote{border-left:2px solid var(--line);padding-left:14px;color:var(--fg2);font-size:13.5px;margin:12px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+  .foot{color:var(--fg3);font-size:12.5px;margin-top:40px;line-height:1.9}
+  .hl{background:#2a2010;color:#ffd479;padding:1px 5px;border-radius:4px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="meta">QuantLab · 独立裁定报告 · 2026-09-24 · 复核人：第三方（未参与前两份 review 的撰写）</div>
+<h1>两份 Review 谁对？<br>—— 以可复现证据逐条裁决</h1>
+<p class="lead">我读了 <code>docs/REVIEW_2026-09-24.md</code>（同事 A）、同事 B 的长文 review，以及 <code>docs/REVIEW_COMPARISON_2026-09-24.md</code>（A 对 B 的反驳），然后用 <code>.venv2</code> 在缓存数据上把两边的关键断言<strong>全部独立重跑了一遍</strong>。结论不是"各有道理"。</p>
+
+<div class="verdict">
+<h3>裁定</h3>
+<p><strong>同事 A 对了，而且它抓到的那个 bug 比它自己写的还要致命。</strong>同事 B 的<strong>方向</strong>是对的（幸存者池、腾讯源冻结、风控未触发、信号滞后全部属实），但它的<strong>因果机制</strong>是错的——它断言"引擎因果链干净、没有核心 bug、专家集成贡献 1pp"，而实测是：<span class="hl">因子权重 730/730 期全部为 NaN，全部股票得分恒为 0，五个专家 73/73 期给出完全相同的名单</span>。因子层和专家层根本没在运行。</p>
+<p>另外，<strong>两份 review 都漏掉了同一个更狠的事实</strong>：退化之后，选股完全由一个不稳定排序决定，形成一只<strong>跨 73 期恒定不变的 28 只篮子</strong>，而且对池成分极度敏感——池宽从 40 改成 39 或 41，年化就在 16.00% / 14.62% / 13.55% 之间跳。</p>
+</div>
+
+<div class="kpi">
+  <div><div class="v" style="color:var(--amber)">730/730</div><div class="k">因子权重全 NaN 的期数</div></div>
+  <div><div class="v" style="color:var(--red)">1</div><div class="k">全部股票的得分唯一值个数</div></div>
+  <div><div class="v" style="color:var(--red)">73/73</div><div class="k">五专家名单完全相同的期数</div></div>
+  <div><div class="v" style="color:var(--red)">13.55→16.00%</div><div class="k">池宽 41→39 的年化区间</div></div>
+</div>
+
+<h2>一、分歧点逐条裁决</h2>
+
+<h3>1.1 争议核心：引擎有没有核心 bug？</h3>
+
+<div class="card bad">
+<h3><span class="tag p0">P0</span> 同事 A 的 F01 —— 我完整复现，并且比 A 描述得更严重</h3>
+<p>根因在 <code>quantlab/backtest/engine.py:184</code>（<code>monitor.py:107</code> 同一处）：</p>
+<pre>w_row = w_fac.to_frame("w").T.reindex([t])   # 行索引是字符串 "w"，不是时间戳</pre>
+<p>实测输出：</p>
+<pre>w_fac.to_frame('w').T.reindex([t]) -> 全 NaN?  True
+行索引变成: [Timestamp('2026-08-31 00:00:00')]   (原为字符串 'w')</pre>
+<p>然后 <code>scoring.py:117</code> 的 <code>.ffill().fillna(0.0)</code> 把权重全填成 0，于是 <code>composite_score</code> 恒为全 0 面板；<code>experts.py:100</code> 的 <code>s.rank(axis=1, pct=True)</code> 在全 0 面板上退化成常数 <code>20.5/40 = 0.5125</code>；<code>expert_top_union</code> 的 <code>sort_values(ascending=False)</code> 在同分序列上返回一个<strong>由 quicksort 内部顺序决定的伪随机名单</strong>。</p>
+<p>我挂上探针重跑整段回测，结果如下——这是本轮审查最硬的一条证据：</p>
+<table>
+<tr><th>观测项</th><th>实测值</th></tr>
+<tr><td><code>composite_score</code> 调用次数 / 其中权重全 NaN</td><td class="num no-t">730 / 730</td></tr>
+<tr><td>截面得分唯一值个数（min / max）</td><td class="num no-t">1 / 1</td></tr>
+<tr><td>得分全为 0 的期数</td><td class="num no-t">730 / 730</td></tr>
+<tr><td>五个专家候选完全相同的期数</td><td class="num no-t">73 / 73</td></tr>
+<tr><td>仅修正该行索引后的年化 / 回撤</td><td class="num">12.8779% / −13.6735%</td></tr>
+<tr><td>同事 A 报告的同一实验</td><td class="num">12.88% / −13.67%</td></tr>
+</table>
+<p>数字完全吻合。<strong>同事 A 的 F01 成立，同事 B 的"因果链干净、没有核心 bug"不成立。</strong></p>
+</div>
+
+<div class="card bad">
+<h3>同事 B 由此推出的三条因果解释，全部不成立</h3>
+<table>
+<tr><th>同事 B 的说法</th><th>裁定</th><th>依据</th></tr>
+<tr>
+  <td>"池内动量类因子全样本 IC 普遍为负，动态 ICIR 压掉动量暴露，所以策略主动躲开 2024–26 的 AI 行情"</td>
+  <td class="no-t">错</td>
+  <td>得分是常数，ICIR 从未传导到排名。持有的股票与 IC 无关，只与代码字符串排序有关。</td>
+</tr>
+<tr>
+  <td>"专家权重均值 lowvol_quality 0.35 &gt; value 0.26 … 说明系统主动躲开 AI 动量"</td>
+  <td class="no-t">错</td>
+  <td>专家权重只被写进日志。<code>comparison.json</code> 已证：把专家换成常数 0.5、权重固定动量 100%，逐日收益与持仓权重<strong>差为 0</strong>。</td>
+</tr>
+<tr>
+  <td>"去掉专家集成 13.61% → 专家集成确实贡献 +1pp"</td>
+  <td class="no-t">错</td>
+  <td>这个开关同时切换了代码分支：专家分支走 <code>expert_top_union</code>（拥挤过滤因索引 bug 从不执行），单专家分支走 <code>engine.py:220</code>（拥挤过滤执行，且方向反了）。变量没被隔离。</td>
+</tr>
+</table>
+<p>换句话说：同事 B 观察到的"持仓事实"（从未持有 300308 / 300502）是<strong>真的</strong>，但它给这个事实配的<strong>机制是编的</strong>。</p>
+</div>
+
+<h3>1.2 争议核心：同池 29% 基线，是"幸存者偏差量化值"还是"脚本口径错误"？</h3>
+
+<div class="card warn">
+<h3><span class="tag p1">关键</span> 两边各对一半 —— 我用严格 share/cash 账本做了仲裁</h3>
+<p>同事 A 的反例（3 只等权，一只 10→11→10）我原样复现：引擎公式给 <code>+0.202020%</code>，真实买入持有 <code>0%</code>。数学上 A 没错。</p>
+<p>但 A 由此推论"29% 被这个口径错误实质性抬高"——<strong>这个推论错了</strong>。我把同池基线用<strong>持股数 + 现金 + 双边成本</strong>的严格账本重算：</p>
+<table>
+<tr><th>口径</th><th>年化</th><th>波动</th><th>最大回撤</th><th>总收益</th></tr>
+<tr><td>真实买入持有（固定股数，首日开盘等额买入）</td><td class="num">32.62%</td><td class="num">25.78%</td><td class="num">−24.22%</td><td class="num">407.5%</td></tr>
+<tr><td>真实月度等权（月内权重漂移 + 成本）</td><td class="num ok-t">28.43%</td><td class="num">19.66%</td><td class="num">−20.95%</td><td class="num">322.0%</td></tr>
+<tr><td>真实每日等权（每日再平衡 + 成本）</td><td class="num">26.25%</td><td class="num">19.32%</td><td class="num">−21.15%</td><td class="num">282.4%</td></tr>
+<tr><td>同事的固定权重日收益公式（零成本）</td><td class="num">28.00%</td><td class="num">19.11%</td><td class="num">−19.92%</td><td class="num">313.8%</td></tr>
+<tr><td>同事 B 报告的 <code>pool_baseline</code></td><td class="num">29.03%</td><td class="num">18.56%</td><td class="num">−18.08%</td><td class="num">333.4%</td></tr>
+</table>
+<p><strong>裁定：</strong>同事 B 的 29.03% 与真实月度等权的 28.43% 只差 0.6pp——作为一个"同池等权月度调仓"的近似，<strong>这个数基本是对的</strong>。同事 A 说它"隐含每日免费再平衡所以高估"，方向对但量级被夸大：在该组合上固定权重公式与真实月度等权的差只有约 0.4pp。</p>
+<p>但同事 B 的 <strong>"买入持有 28.00%" 是明确错的</strong>——真实买入持有是 32.62%。它那个函数叫 <code>buyhold_baseline</code>，实际算的是每日再平衡等权。同事 A 这一点抓得准。</p>
+</div>
+
+<div class="card ok">
+<h3>两边都没有分歧、且都成立的结论</h3>
+<p>无论用哪种口径，同池被动收益都远高于策略，<strong>"策略跑输自己所在的池子"这个结论是稳健的</strong>：</p>
+<table>
+<tr><th>对比基准</th><th>累计相对</th><th>年化相对</th></tr>
+<tr><td>策略 vs 真实买入持有</td><td class="num no-t">−56.80%</td><td class="num no-t">−13.57%</td></tr>
+<tr><td>策略 vs 真实月度等权</td><td class="num no-t">−48.05%</td><td class="num no-t">−10.76%</td></tr>
+<tr><td>策略 vs 真实每日等权</td><td class="num no-t">−42.66%</td><td class="num no-t">−9.21%</td></tr>
+</table>
+<p>同事 A 对同事 B "累计 −49.25%" 的口径纠正是对的（那是相对财富，不是风险调整 alpha），正确的年化相对是 −10.8% ~ −13.6% 区间，而不是 B 脚本里那个 <code>−24.44+45.91j%</code>（对负数取分数次幂的产物）。</p>
+</div>
+
+<h3>1.3 争议核心：年化 15% 是怎么来的？</h3>
+
+<div class="card warn">
+<h3>两边都没说全 —— 我补一个决定性的发现</h3>
+<p>同事 A 说"14.62% 与存档 15.25% 的差异来源尚未定位"；同事 B 说差异来自缓存更新。我定位到了：</p>
+<table>
+<tr><th>基准序列</th><th>年化</th><th>最大回撤</th><th>gross=0.3 的期数</th></tr>
+<tr><td><code>bench=None</code>（退化为候选池均价，<code>engine.py:149</code>）</td><td class="num">14.6178%</td><td class="num">−17.7972%</td><td class="num">6</td></tr>
+<tr><td>单调上涨的合成基准（regime 永不触发深熊）</td><td class="num ok-t">15.2515%</td><td class="num ok-t">−16.5197%</td><td class="num">0</td></tr>
+<tr><td>候选池等权归一化指数</td><td class="num">15.1570%</td><td class="num">−19.5667%</td><td class="num">11</td></tr>
+<tr><td><strong>存档 <code>results.pkl</code></strong></td><td class="num">15.2515%</td><td class="num">−16.5197%</td><td class="num">0</td></tr>
+</table>
+<p>存档的 15.2515% / −16.5197% 被<strong>精确复现</strong>，条件是 <code>gross_scale ≡ 1.0</code>（regime 从不触发深熊降仓）。而 <code>data/bench/</code> 是空的，存档没保存基准序列——用代码里写明的退化路径（候选池均价）会触发 6 次深熊降仓，年化掉到 14.62%。</p>
+<p><strong>所以：15.25% 不是缓存漂移造成的，是"存档当时用的那条基准恰好没触发风控"造成的。</strong>同一份代码，换一条基准序列，年化在 14.62%–15.25% 之间，回撤在 −16.5%–−19.6% 之间。这本身就是"结果不可复现"的直接证据。</p>
+</div>
+
+<h2>二、两份 Review 都漏掉的第三个事实</h2>
+
+<div class="card bad">
+<h3>退化之后的"策略"，是一只跨 73 期恒定不变的 28 只篮子</h3>
+<p>因为得分是常数，<code>expert_top_union</code> 每期从同一批代码里挑出同样的 28 只：</p>
+<pre>73 期里不同候选集个数 = 1  -> 逐期恒定: True
+
+恒定候选集(28只):
+000333 000858 002371 002384 002415 002475 002594 300394
+600519 600900 601088 601138 601166 601288 601318 601319
+601398 601628 601658 601728 601857 601899 601988 601998
+603259 603993 688012 688041
+
+实际持有过 27 只；候选集内但从未持有: 000858</pre>
+<p>所谓"月度调仓多因子选股"，实际是：<strong>一只固定的 27 只股票篮子 + 每月用 120 日收益跑一次最小方差配权 + 目标波动率降杠杆 + 回撤降仓</strong>。横截面因子选择、ICIR 加权、五专家集成、拥挤惩罚——全部没有参与决策。</p>
+<p>而且这只篮子对池成分<strong>极度敏感</strong>（因为同分排序的 tie-break 是 quicksort 内部顺序）：</p>
+<table>
+<tr><th>池的微小改动</th><th>年化</th><th>候选集重叠</th></tr>
+<tr><td>基准 TOP40</td><td class="num">14.62%</td><td class="num">28/28</td></tr>
+<tr><td>池内剔除 1 只、补入第 41 名</td><td class="num">15.28%</td><td class="num no-t">25/28</td></tr>
+<tr><td>池宽 39</td><td class="num">16.00%</td><td class="num no-t">25/28</td></tr>
+<tr><td>池宽 41</td><td class="num">13.55%</td><td class="num">27/28</td></tr>
+</table>
+<p>而候选池是<strong>每日刷新的实时快照</strong>（<code>cli.py:33-37</code> → <code>sources.py:85</code> → 新浪 spot）。也就是说：<strong>今天跑和明天跑，只要 TOP40 名单动一只，就是另一只篮子、另一个年化。</strong>"15% 年化"不是策略的产出，是某一次 tie-break 的产出。</p>
+</div>
+
+<h2>三、其余争议点裁决表</h2>
+
+<table>
+<tr><th>争议点</th><th>同事 A</th><th>同事 B</th><th>我的裁定</th></tr>
+<tr>
+  <td>因子/专家层是否真正参与选股</td>
+  <td class="ok-t">否（F01，P0）</td>
+  <td class="no-t">是，"因果链干净"</td>
+  <td class="ok-t">A 对。730/730 期权重全 NaN，专家 73/73 期同名单</td>
+</tr>
+<tr>
+  <td>股票池是"今日牛股名单"（幸存者偏差）</td>
+  <td class="ok-t">是，列为 P1/F09</td>
+  <td class="ok-t">是，列为主因</td>
+  <td class="ok-t">双方都对。池 = 今日新浪快照按<strong>当前</strong>流通市值取 TOP40</td>
+</tr>
+<tr>
+  <td>腾讯源 amount 缺失冻结个股</td>
+  <td class="ok-t">是</td>
+  <td class="ok-t">是</td>
+  <td class="ok-t">都对。000858、600276 各 1454 行 amount 有效值 = <strong>0</strong>，source=tencent</td>
+</tr>
+<tr>
+  <td>腾讯源是否会"把因子也清掉"</td>
+  <td class="ok-t">不会，只有量/额类因子受影响</td>
+  <td class="no-t">"因子被 NaN→0 清掉"</td>
+  <td class="ok-t">A 对。价格类因子（动量/波动）完好；只有 turnover/amount 类被置中</td>
+</tr>
+<tr>
+  <td>风控分级 L3/L4 是否触发过</td>
+  <td class="ok-t">存档从未触发</td>
+  <td class="ok-t">存档从未触发</td>
+  <td class="ok-t">都对。存档 gross ≡ 1.0，L2 仅 2 期，L3/L4/深熊 = 0</td>
+</tr>
+<tr>
+  <td>L2 触发期数</td>
+  <td class="mid-t">明确记录仅 2 期</td>
+  <td class="no-t">约 11/71 期</td>
+  <td class="ok-t">A 对。11 是"权重和 ≤0.75"的期数，含目标波动率自身的降仓</td>
+</tr>
+<tr>
+  <td>全换仓费用是否漏算</td>
+  <td class="ok-t">是（F02）</td>
+  <td class="mid-t">未提</td>
+  <td class="ok-t">A 对。索引不一致时 turnover 记为 <strong>0.0000</strong>，真值 1.0、费用 0.70%</td>
+</tr>
+<tr>
+  <td>缺 K 线后复牌涨跌被吞</td>
+  <td class="ok-t">是（F05）</td>
+  <td class="mid-t">未提</td>
+  <td class="ok-t">A 对。<code>pct_change</code> 全 NaN → <code>fillna(0)</code>，记 0% 而非 −20%</td>
+</tr>
+<tr>
+  <td>末日同日成交</td>
+  <td class="ok-t">是（F06）</td>
+  <td class="mid-t">未提</td>
+  <td class="ok-t">A 对。存档末笔 signal = exec = <strong>2026-09-24</strong></td>
+</tr>
+<tr>
+  <td>月内固定权重 = 隐含每日免费再平衡</td>
+  <td class="mid-t">是，且认为抬高了基线</td>
+  <td class="mid-t">未提</td>
+  <td class="mid-t">机制对，量级被夸大：真实月度等权 28.43% vs 固定权重公式 28.00%</td>
+</tr>
+<tr>
+  <td>"29% 是幸存者偏差量化值"</td>
+  <td class="no-t">不是，口径有缺陷</td>
+  <td class="ok-t">是</td>
+  <td class="mid-t">B 的数基本对（28.43%），但"量化值"的说法不严谨——它是事后池的被动收益</td>
+</tr>
+<tr>
+  <td>"实盘预期 8–12%"</td>
+  <td class="no-t">无证据支持</td>
+  <td class="mid-t">给出该区间</td>
+  <td class="ok-t">A 对。没有任何 PIT 池 / 正确账本 / 样本外结果支持这个数字</td>
+</tr>
+<tr>
+  <td>"年化超额 −24.44+45.91j%"</td>
+  <td class="ok-t">B 脚本的 bug</td>
+  <td class="no-t">作为结论输出</td>
+  <td class="ok-t">A 对。负数取分数次幂；正确年化相对约 −11.1%</td>
+</tr>
+<tr>
+  <td>"扩池到 53 只"实验</td>
+  <td class="ok-t">没跑成，实际仍是 40 只</td>
+  <td class="no-t">报告为已完成</td>
+  <td class="ok-t">A 对</td>
+</tr>
+<tr>
+  <td>14.62% 与 15.25% 差异来源</td>
+  <td class="mid-t">"尚未定位"</td>
+  <td class="no-t">"缓存更新"</td>
+  <td class="ok-t">都不是。是<strong>基准序列</strong>：gross≡1.0 时精确复现存档</td>
+</tr>
+</table>
+
+<h2>四、结论</h2>
+
+<div class="card ok">
+<h3>对同事 A 的评价</h3>
+<p><strong>技术结论成立，且是本轮唯一抓到决定性 bug 的一方。</strong>F01 是 P0 级真缺陷，我逐位复现（12.8779% vs 它报的 12.88%）。F02/F04/F05/F06/F08/F09 的机制我都验证过，成立。它自己的 <code>review_audit.py</code> 产出的确定性反例（全换仓 0 费用、缺行情吞跌幅、卖不掉继续买造成 123.33% 仓位、跌停止损仍成交、选股失败整月收益归零）与我的独立重跑一致。</p>
+<p><strong>两处过度：</strong>(1) 把同池 29% 的口径问题说成实质性高估——真实月度等权是 28.43%，几乎一致，它的反例虽然算术正确但量级误导；(2) 低估了 F01 的实际破坏力——它说"同分排序没有稳定性保证"，但没量化出"候选集跨 73 期恒定"和"池宽 ±1 就换篮子"这两件事。</p>
+</div>
+
+<div class="card bad">
+<h3>对同事 B 的评价</h3>
+<p><strong>方向对，机制错，结论过度。</strong>它把注意力放在"收益溯源"上，正确识别了幸存者池（这是 A 的第一版漏掉的维度，值得肯定）、腾讯源冻结、风控未触发、信号滞后（<code>signals.json</code> 信号日 2026-08-31 / 执行日 2026-09-23，我确认无误）。</p>
+<p>但它<strong>整个因果解释建立在"因子和专家在正常工作"这个前提上，而这个前提是假的</strong>。它给的"动量 IC 为负 → 主动躲开 AI 牛股"、"低波专家权重 0.35 驱动选股"、"专家贡献 1pp"，全部是从日志里的数字反推的故事，而日志里的数字从未参与决策。它的"8–12% 实盘预期"没有任何证据链。</p>
+<p>一个可操作的判据：如果 B 的结论成立（引擎干净、只是池子有偏），那修复方向应该是"换 PIT 池"；但真实情况是引擎的选股层根本没运行——<strong>先换池子毫无意义，因为选股结果不取决于池子里的股票，而取决于池子里代码字符串的排序 tie-break。</strong></p>
+</div>
+
+<h2>五、行动优先级（合并两方意见后的最终版）</h2>
+
+<table>
+<tr><th>#</th><th>动作</th><th>级别</th><th>为什么排在这个位置</th></tr>
+<tr><td>1</td><td>修 <code>engine.py:184</code> 与 <code>monitor.py:107</code> 的权重索引，并加"权重不得全空 / 因子符号翻转必须改变排名 / 不同专家必须给出不同名单"的验收测试</td><td><span class="tag p0">P0</span></td><td>不修这条，后面所有关于收益的讨论都没有对象。修完再重跑，年化会变（12.88%），且这次才是真的多因子策略</td></tr>
+<tr><td>2</td><td>用"持股数 + 现金 + 成交 + 费用"的逐日账本替换当前的收益率点乘记法；旧仓∪目标仓全量生成订单</td><td><span class="tag p0">P0</span></td><td>修好 #1 后股票才会真正轮换，#2 的漏洞影响会被放大</td></tr>
+<tr><td>3</td><td>数据源退化门禁：缓存写入记录 source，拒绝"腾讯源覆盖 akshare/baostock"；<code>amount</code> 缺失不得判定为停牌</td><td><span class="tag p1">P1</span></td><td>000858 / 600276 整段被冻死；且同日重跑信号会漂移</td></tr>
+<tr><td>4</td><td>保存基准序列与运行配置（<code>results.pkl</code> 只存结果不存输入，导致 15.25% 无法复现）</td><td><span class="tag p1">P1</span></td><td>我定位到差异全部来自基准，但基准已丢失</td></tr>
+<tr><td>5</td><td>把风控改成日频评估；L3/L4 与深熊乘子目前只在月末被调用一次</td><td><span class="tag p1">P1</span></td><td>存档 gross ≡ 1.0，分级风控事实上只有 L2 一档在工作</td></tr>
+<tr><td>6</td><td>加"同池被动对照"列（买入持有 + 月度等权），用严格账本实现</td><td><span class="tag p1">P1</span></td><td>这是同事 B 最有价值的建议，但必须用正确账本重做，否则又是一个错数</td></tr>
+<tr><td>7</td><td>引入 PIT 历史股票池（含退市/ST/历史市值）</td><td><span class="tag p1">P1</span></td><td>在此之前，任何年化都只能标为"快照池研究结果"，不能用"打八折"修正</td></tr>
+</table>
+
+<div class="card warn">
+<h3>最后一句</h3>
+<p>不要再去调 IC 窗口、温度、因子权重了。<strong>当前这只 27 只篮子的年化，是由 <code>pandas</code> 对同分序列做 quicksort 的顺序决定的。</strong>在修完 #1 之前，任何关于"策略 alpha 是正是负""实盘预期多少"的讨论都是在讨论一个随机数。</p>
+</div>
+
+<hr>
+<div class="foot">
+<strong>复现方式</strong>（全程离线，只读缓存，不改生产代码/缓存/结果文件）：<br>
+<code>.venv2/bin/python scripts/adjudicate_20260924.py</code><br><br>
+<strong>本次产物</strong><br>
+· 独立复核脚本：<code>scripts/adjudicate_20260924.py</code><br>
+· 逐项证据 JSON：<code>output/adjudication_20260924/evidence.json</code><br>
+· 完整运行日志：<code>output/adjudication_20260924/run.log</code><br><br>
+<strong>环境</strong>：Python 3.12 · pandas 3.0.6 · numpy 2.5.3 · <code>.venv2</code>。原 7 项冒烟测试 <code>7/7 OK</code>（约 32 秒）——它们不覆盖上述任何一条交易与因果合同，这也是为什么这套缺陷能长期存在。<br><br>
+<strong>证据边界</strong>：本报告所有数字均由本次代码/数据检查或运行产生；行情真实性未用第二来源独立交叉验证；无 PIT 池、无样本外、无实盘成交验证。修复后的真实年化<strong>未知</strong>——本报告不给出任何收益预期。
+</div>
+
+</div>
+</body>
+</html>
