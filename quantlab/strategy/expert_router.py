@@ -154,27 +154,37 @@ class ExpertRouter:
 
 
 def select_reference_basket(heads, current, industries, *, priorities=None,
-                            holdings=50, retention_rank=150, industry_slots=15):
-    """Only reorder NEW admission slots, within original financial tiers.
+                            holdings=50, retention_rank=150, industry_slots=15,
+                            selection_policy='reference_retention'):
+    """Research policies share financial tiers, missing slots and sector limits.
 
-    Retention ranks still use the frozen reference ordering. Names without a
-    valid expert score stay at their original positions; no coverage selection
-    or unknown-as-zero substitution is introduced.
+    Default retains the original reference ordering for held targets. The
+    explicit challenger uses one within-tier score order for retention and
+    admission. Neither policy converts target holdings into assumed fills.
     """
+    if selection_policy not in ('reference_retention', 'score_consistent_retention'):
+        raise ValueError('unknown_selection_policy')
     if holdings < 1 or retention_rank < holdings or industry_slots < 1:
         raise ValueError('invalid_reference_basket_limits')
     if any(not np.isfinite(v) for v in heads.values()):
         raise ValueError('invalid_reference_score')
+    priorities = priorities or {}
+    def reorder(sequence):
+        ordered = list(sequence)
+        for tier in sorted(set(heads.values()), reverse=True):
+            slots = [i for i, c in enumerate(ordered) if heads[c] == tier
+                     and c in priorities and np.isfinite(priorities[c])]
+            names = sorted((ordered[i] for i in slots), key=lambda c: (-priorities[c], c))
+            for i, code in zip(slots, names):
+                ordered[i] = code
+        return ordered
     ranked = sorted(heads, key=lambda code: (-heads[code], code))
+    if selection_policy == 'score_consistent_retention':
+        ranked = reorder(ranked)
     retained = [c for c in ranked[:retention_rank] if c in current]
     admitted = [c for c in ranked if c not in retained]
-    priorities = priorities or {}
-    for tier in sorted(set(heads.values()), reverse=True):
-        slots = [i for i, c in enumerate(admitted) if heads[c] == tier
-                 and c in priorities and np.isfinite(priorities[c])]
-        names = sorted((admitted[i] for i in slots), key=lambda c: (-priorities[c], c))
-        for i, code in zip(slots, names):
-            admitted[i] = code
+    if selection_policy == 'reference_retention':
+        admitted = reorder(admitted)
     chosen, counts = [], Counter()
     for code in retained + admitted:
         industry = industries.get(code, 'unclassified')
