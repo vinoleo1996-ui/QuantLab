@@ -137,12 +137,12 @@ def run_sim():
 
 
 def to_targets(schedule):
-    rows, previous = [], set()
+    rows, ever = [], set()
     for day in sorted(schedule):
         weights = {f"{c.split('.')[1]}.{c.split('.')[0].upper()}": w for c, w in schedule[day].items()}
         rows.append({'signal_date': str(pd.Timestamp(day).date()), 'weights': weights, 'active': list(weights),
-                     'sell': sorted(previous - set(weights)), 'sleeve': 0})
-        previous = set(weights)
+                     'sell': sorted(ever - set(weights)), 'sleeve': 0})
+        ever |= set(weights)
     return rows
 
 

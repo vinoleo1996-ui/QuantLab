@@ -54,12 +54,14 @@ def schedule_for(phase, seed):
 
 
 def to_targets(schedule):
-    rows, previous = [], set()
+    """``sell`` lists every name ever targeted that is not targeted now: a name that failed to sell
+    (limit-down, suspension) is otherwise share-locked by ``execution_weights`` forever."""
+    rows, ever = [], set()
     for day in sorted(schedule):
         weights = {AU_code(code): w for code, w in schedule[day].items()}
         rows.append({'signal_date': str(pd.Timestamp(day).date()), 'weights': weights, 'active': list(weights),
-                     'sell': sorted(previous - set(weights)), 'sleeve': 0})
-        previous = set(weights)
+                     'sell': sorted(ever - set(weights)), 'sleeve': 0})
+        ever |= set(weights)
     return rows
 
 
