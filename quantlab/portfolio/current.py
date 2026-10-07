@@ -1,121 +1,181 @@
-"""Read verified versioned simulation accounts. Ledger marks and FIFO lot costs are distinct from timestamped public quotes. No broker account is inferred from a backtest."""
+"""Read the current versioned simulation account without inventing holdings.
+
+This adapter intentionally refuses weight-only replays and never scans output
+directories for a plausible-looking account. A holdings source is displayable
+only when the current versioned result contains a complete simulation ledger.
+"""
 
 from __future__ import annotations
 
-import pickle
+import json
+import re
+from collections.abc import Mapping
 
-import numpy as np
 import pandas as pd
 
 from quantlab.config import OUTPUT_DIR
-from quantlab.data.store import DataStore
-
-YEAR_START = "2026-01-05"
 
 
-def _load_result():
-    import json
-    from quantlab.report.runs import load_run
+def _load_result() -> dict | None:
+    """Read the versioned current result; never fall back to ``results.pkl``."""
+
     latest = OUTPUT_DIR / "runs" / "latest.json"
-    if latest.exists():
-        run = json.loads(latest.read_text())["run_id"]
+    if not latest.exists():
+        return None
+    try:
+        run_id = json.loads(latest.read_text())["run_id"]
+        from quantlab.report.runs import load_run
+
+        return {"result": load_run(OUTPUT_DIR / "runs" / run_id), "source": "versioned_replay"}
+    except (ValueError, KeyError, OSError):
+        return {"result": {"status": "unverified_artifacts"}, "source": "unverified_artifacts"}
+
+
+def _complete_account_state(state: object) -> bool:
+    """Require exact ledger fields before rendering a position or P&L row."""
+
+    if not isinstance(state, Mapping):
+        return False
+    fields = ("quantities", "weights", "marks", "cost_basis", "entry_dates")
+    if any(not isinstance(state.get(field), Mapping) for field in fields):
+        return False
+    quantities = state["quantities"]
+    if not quantities:
+        return False
+    for code, quantity in quantities.items():
         try:
-            return {"result": load_run(OUTPUT_DIR / 'runs' / run), "source": "versioned_replay"}
-        except (ValueError,KeyError,OSError):
-            return {'result':{'status':'unverified_artifacts'},'source':'unverified_artifacts'}
-    p = OUTPUT_DIR / "results.pkl"
-    if not p.exists(): return None
-    return {'result':{'status':'legacy_unvalidated'},'source':'archived_legacy'}
+            is_positive = float(quantity) > 0
+        except (TypeError, ValueError):
+            return False
+        if not is_positive or any(code not in state[field] for field in fields[1:]):
+            return False
+    return bool(state.get("date"))
 
 
-def _entry_of(wh: pd.DataFrame, code: str) -> pd.Timestamp:
-    """最近连续持有段的起点(该段最早一期)。若中间卖出(w=0)过，则为最近一次重新买入那期。"""
-    s = wh[code]
-    pos = s[s > 1e-6]
-    if pos.empty:
-        return s.index[-1]
-    p = pos.index
-    start = p[-1]
-    for j in range(len(p) - 1, 0, -1):
-        if wh.index.get_loc(p[j]) - wh.index.get_loc(p[j - 1]) > 1:
-            start = p[j]
-            break
-        start = p[j - 1]
-    return start
+def _public_code(code: object) -> str | None:
+    """Translate a ledger id to a six-digit public quote key without mutating it."""
+
+    value = str(code or "").strip().lower()
+    for pattern in (r"(?:sh|sz|bj)\.(\d{6})", r"(\d{6})\.(?:sh|sz|bj)", r"(\d{6})"):
+        match = re.fullmatch(pattern, value)
+        if match:
+            return match.group(1)
+    return None
 
 
-def snapshot(with_quotes=True):
+def snapshot(with_quotes: bool = True) -> list[dict]:
+    """Return the current complete simulated ledger, or an honest empty list."""
+
     data = _load_result()
-    if data is None or data["result"].get("status") != "research_unvalidated": return []
+    if data is None:
+        return []
     result = data["result"]
-    states = result.get("account", [])
-    if not states: return []
+    states = result.get("account") or []
+    if result.get("status") != "research_unvalidated" or not states or not _complete_account_state(states[-1]):
+        return []
     state = states[-1]
     quantities = state["quantities"]
+    quote_keys = {code: _public_code(code) for code in quantities}
     quotes = pd.DataFrame()
-    if with_quotes and quantities:
-        try:
-            from quantlab.data.realtime import batch_quotes
-            quotes = batch_quotes(list(quantities))
-        except ImportError:
-            pass  # Optional public quote adapters; dated account marks remain explicitly labelled.
+    if with_quotes:
+        public_codes = [code for code in quote_keys.values() if code]
+        if public_codes:
+            try:
+                from quantlab.data.realtime import batch_quotes
+
+                quotes = batch_quotes(public_codes)
+            except (ImportError, OSError, ValueError):
+                pass
     rows = []
-    for code, qty in quantities.items():
-        price = state.get('marks',{}).get(code)
-        quote=quotes.loc[code].to_dict() if code in quotes.index else {}
-        live=quote.get('price');cost=state.get('cost_basis',{}).get(code)
-        rows.append(dict(code=code, name=quote.get('name',code), quantity=qty, weight=state["weights"][code],
-                         account_type="simulation", as_of=str(state["date"]),run_id=result['run_id'], cost=cost, entry_date=state.get('entry_dates',{}).get(code),
-                         price=price, live_quote=live,quote_time=quote.get('time'),quote_source=quote.get('source'),
-                         pct_chg=quote.get('pct_chg'),market_value=qty*price if price else None,
-                         return_since_entry=(price/cost-1) if cost and price else None, return_ytd=None,
-                         profit_since_entry=qty*(price-cost) if cost and price else None, profit_ytd=None,
-                         lot_cost=None, lot_affordable=None))
+    for code, quantity in quantities.items():
+        public_code = quote_keys.get(code)
+        quote = quotes.loc[public_code].to_dict() if public_code and public_code in quotes.index else {}
+        mark = state["marks"].get(code)
+        cost = state["cost_basis"].get(code)
+        rows.append({
+            "code": str(code),
+            "public_code": public_code,
+            "name": quote.get("name", str(code)),
+            "quantity": quantity,
+            "weight": state["weights"].get(code),
+            "account_type": "simulation",
+            "as_of": str(state["date"]),
+            "run_id": result.get("run_id"),
+            "cost": cost,
+            "entry_date": state["entry_dates"].get(code),
+            "price": mark,
+            "live_quote": quote.get("price"),
+            "quote_time": quote.get("time"),
+            "quote_source": quote.get("source"),
+            "pre_close": quote.get("pre_close"),
+            "open": quote.get("open"),
+            "high": quote.get("high"),
+            "low": quote.get("low"),
+            "volume": quote.get("volume"),
+            "amount": quote.get("amount"),
+            "pct_chg": quote.get("pct_chg"),
+        })
     return rows
 
 
-def _r(price, base, raw: bool = False) -> float | None:
-    if price is None or not base:
-        return None
-    return float(price / base - 1.0)
-
-
 def summary() -> dict:
-    """组合概况与权重口径说明(为何等权/为何 30% 仓位)。"""
+    """Return current account metadata without promoting research or execution."""
+
     data = _load_result()
-    out = {"exec_date": "", "nav": None, "drawdown": None, "daily": None}
+    out = {
+        "exec_date": "",
+        "nav": None,
+        "drawdown": None,
+        "daily": None,
+        "status": "blocked_data",
+        "account_type": "simulation",
+        "displayable": False,
+        "source_kind": data.get("source") if data else None,
+    }
     if data is None:
         return out
     result = data["result"]
-    out["status"] = result.get("status", "legacy_unvalidated")
-    out["account_type"] = "simulation"
-    out['run_id']=result.get('run_id')
-    if out["status"] != "research_unvalidated": return out
+    out["status"] = result.get("status", "unverified_artifacts")
+    out["run_id"] = result.get("run_id")
+    states = result.get("account") or []
+    if out["status"] != "research_unvalidated" or not states or not _complete_account_state(states[-1]):
+        return out
+    state = states[-1]
+    out["displayable"] = True
+    out["cash"] = float(state["cash"]) if state.get("cash") is not None else None
+    out["receivables"] = float(state["receivables"]) if state.get("receivables") is not None else 0.0
+    out["nav_mark"] = float(state["nav"]) if state.get("nav") is not None else None
+    out["account_as_of"] = str(state["date"])
+    out["holdings_count"] = len(state["quantities"])
     nav = result.get("nav")
     if nav is not None and len(nav):
         out["nav"] = float(nav.iloc[-1])
         out["exec_date"] = str(nav.index[-1].date())
-        if "drawdown" in result and len(result["drawdown"]):
-            out["drawdown"] = float(result["drawdown"].iloc[-1])
-    dr = result.get("daily_return")
-    if dr is not None and len(dr) >= 2:
-        out["daily"] = float(dr.iloc[-1])
+        drawdown = result.get("drawdown")
+        if drawdown is not None and len(drawdown):
+            out["drawdown"] = float(drawdown.iloc[-1])
+    daily_return = result.get("daily_return")
+    if daily_return is not None and len(daily_return) >= 2:
+        out["daily"] = float(daily_return.iloc[-1])
     trades = result.get("trades") or []
-    last = trades[-1] if trades else {}
-    out["regime_trend"] = last.get("regime", {}).get("trend")
-    out["gross_scale"] = float(last.get("risk", {}).get("gross_scale", 1.0)) if trades else 1.0
-    reasons = last.get("risk", {}).get("reasons", [])
-    out["risk_reasons"] = list(reasons) if reasons else []
+    last_trade = trades[-1] if trades else {}
+    out["regime_trend"] = last_trade.get("regime", {}).get("trend")
+    out["gross_scale"] = float(last_trade.get("risk", {}).get("gross_scale", 1.0)) if trades else 1.0
+    out["risk_reasons"] = list(last_trade.get("risk", {}).get("reasons", []))
     return out
 
 
 def ytd_return() -> float | None:
-    """今年以来(2026-01-05 起)组合净值收益。"""
+    """Return the current ledger's year-to-date return only when it is displayable."""
+
     data = _load_result()
     if data is None:
         return None
-    if data["result"].get("status") != "research_unvalidated": return None
-    nav = data["result"].get("nav")
+    result = data["result"]
+    states = result.get("account") or []
+    if result.get("status") != "research_unvalidated" or not states or not _complete_account_state(states[-1]):
+        return None
+    nav = result.get("nav")
     if nav is None or len(nav) < 2:
         return None
     nav = pd.Series(nav).sort_index()
@@ -123,5 +183,5 @@ def ytd_return() -> float | None:
     base = nav[nav.index < year_start]
     if not len(base):
         return None
-    b = float(base.iloc[-1])
-    return float(nav.iloc[-1] / b - 1.0) if b != 0 else None
+    opening_nav = float(base.iloc[-1])
+    return float(nav.iloc[-1] / opening_nav - 1.0) if opening_nav else None

@@ -16,3 +16,9 @@ data/**/versions/
 data/local_market/
 data/local_supplement/
 data/corporate_actions/
+data/openquant/
+
+# small-cap v4 research data (rebuildable from manifest + raw archives)
+data/smallcap_v4/
+data/smallcap_events/
+data/smallcap_assets/

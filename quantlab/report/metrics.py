@@ -6,6 +6,10 @@ import numpy as np
 import pandas as pd
 
 TRADING_DAYS = 252
+# Annualising fewer sessions than this produces headline numbers that are
+# arithmetically valid but economically meaningless (4 sessions of -2% reads as
+# "-71% a year"). Below the floor we show raw total return and hide the rest.
+MIN_ANNUAL_SESSIONS = 60
 
 
 def ann_return(nav_or_ret: pd.Series, periods: int = TRADING_DAYS) -> float:
@@ -65,6 +69,17 @@ def performance_table(nav: pd.Series, daily_ret: pd.Series,
     # Include first day's fees/P&L. Calendar CAGR and 252-session annualization are separate.
     days = (pd.Timestamp(r.index[-1])-pd.Timestamp(r.index[0])).days + 1
     years = days / 365.2425
+    # Annualising a handful of sessions is arithmetically valid but economically
+    # meaningless: 4 sessions of -2% becomes a "-71% annual return" headline.
+    # Below MIN_ANNUAL_SESSIONS we report the raw total return and null out every
+    # annualised statistic rather than print a number no reader should act on.
+    n = len(r)
+    if n < MIN_ANNUAL_SESSIONS:
+        out = {"total_return": total-1, "annual_return": None, "annual_return_252": None,
+               "annual_vol": None, "sharpe": None, "calmar": None, "win_rate": win_rate(r),
+               "sessions": n, "annualisable": False,
+               "note": f"样本仅 {n} 个交易日（<{MIN_ANNUAL_SESSIONS}），年化/夏普/卡玛无统计意义，已隐藏"}
+        return out
     annual = total ** (1/max(years, 1/365.2425))-1 if total>0 else -1.
     session_annual = total ** (252/len(r))-1 if total>0 else -1.
     vol = ann_vol(r)
@@ -72,7 +87,8 @@ def performance_table(nav: pd.Series, daily_ret: pd.Series,
     dd = float((wealth/wealth.cummax().clip(lower=1.)-1).min())
     out = {"total_return": total-1, "annual_return": annual, "annual_return_252": session_annual,
            "annual_vol": vol, "sharpe": float(r.mean()*252/vol) if vol>0 else 0.,
-           "max_drawdown": dd, "calmar": annual/abs(dd) if dd<0 else 0., "win_rate": win_rate(r)}
+           "max_drawdown": dd, "calmar": annual/abs(dd) if dd<0 else 0., "win_rate": win_rate(r),
+           "sessions": n, "annualisable": True}
     if bench_nav is not None and len(bench_nav)>1:
         br = bench_nav.pct_change(fill_method=None).reindex(r.index)
         pair = pd.concat({"strategy": r, "benchmark": br}, axis=1).dropna()

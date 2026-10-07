@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuantLab · 持仓行情终端</title>
+<link rel="stylesheet" href="/static/portfolio_terminal.css">
+<script src="/static/echarts.min.js"></script>
+</head>
+<body>
+
+<header class="dash-header">
+  <div class="brand">
+    <div class="mark">QL</div>
+    <div>
+      <h1>QuantLab</h1>
+      <div class="sub">模拟研究账户</div>
+    </div>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-pane="holdings-pane" role="tab" aria-selected="true">持仓行情</button>
+    <button class="tab" data-pane="overview-pane" role="tab" aria-selected="false">账户概览</button>
+    <button class="tab" data-pane="signals-pane" role="tab" aria-selected="false">信号</button>
+    <button class="tab" data-pane="experts-pane" role="tab" aria-selected="false">专家</button>
+    <button class="tab" data-pane="run-pane" role="tab" aria-selected="false">运行</button>
+  </div>
+  <div class="header-right">
+    <span class="chip hide-sm" id="chipStatus"><span class="dot warn"></span>研究账户 <b>—</b></span>
+    <span class="chip hide-sm" id="chipPrice"><span class="dot"></span>行情 <b>—</b></span>
+    <span class="chip" id="chipExec"><span class="dot"></span>执行日 <b>—</b></span>
+    <button class="btn btn-icon" id="themeToggle" aria-label="切换主题" title="切换主题">☾</button>
+  </div>
+</header>
+
+<div class="tape" id="tape"><span class="tape-load">大盘指数载入中…</span></div>
+
+<div class="wrap">
+
+  <!-- overview -->
+  <div class="pane" id="overview-pane">
+    <div class="desk">
+      <header class="acct">
+        <div>
+          <div class="quote-code muted">模拟账户</div>
+          <div class="quote-name" id="acctNav">—</div>
+          <div class="acct-sub" id="acctSub"></div>
+        </div>
+        <div class="quote-px" id="acctRet"></div>
+        <div class="seg" id="rangeSeg">
+          <button data-range="1y" type="button">1年</button>
+          <button data-range="3y" type="button">3年</button>
+          <button data-range="all" class="on" type="button">全部</button>
+        </div>
+      </header>
+      <div class="desk-kpis" id="kpis"></div>
+      <div class="desk-chart" id="overviewGrid">
+        <div id="chart-pane">
+          <div class="card-body">
+            <div class="chart desk-nav" id="chartNav"></div>
+            <div class="chart desk-dd" id="chartDD"></div>
+          </div>
+          <div class="legend-note" id="chartNote">实线是账户净值，虚线是基准。下方是回撤。</div>
+        </div>
+      </div>
+      <div class="acct-risk" id="riskBody"></div>
+      <div id="overviewNote" hidden></div>
+    </div>
+  </div>
+
+  <!-- holdings -->
+  <div class="pane active" id="holdings-pane">
+    <div class="terminal">
+      <aside class="watch">
+        <div class="watch-head">
+          <div class="watch-title">持仓</div>
+          <div class="pday" id="holdDay">
+            <span class="pday-l">今日盈亏</span>
+            <span class="pday-money" id="holdPnl">—</span>
+            <span class="pday-v" id="holdToday">—</span>
+            <span class="pday-y" id="holdYtd"></span>
+          </div>
+          <div class="watch-meta" id="holdNote"></div>
+          <div class="seg" id="watchSort">
+            <button data-key="chg" class="on" type="button">涨跌</button>
+            <button data-key="since" type="button">收益</button>
+            <button data-key="pnl" type="button">盈亏</button>
+            <button data-key="mv" type="button">市值</button>
+          </div>
+        </div>
+        <div class="watch-list" id="htable"></div>
+        <div id="hkpis" hidden></div>
+        <div class="watch-split" id="watchSplit" role="separator" aria-orientation="vertical" aria-label="拖动调整持仓列宽度，双击恢复默认" aria-valuemin="240" aria-valuemax="640" tabindex="0" title="拖动调整宽度，双击恢复"></div>
+      </aside>
+      <section class="stage">
+        <div class="quote-top">
+          <div>
+            <div class="quote-name" id="qName">选择一只股票</div>
+            <div class="quote-code muted" id="qCode">左侧点选后查看 K 线</div>
+          </div>
+          <label class="symbol-search">
+            <input id="symbolSearch" type="search" placeholder="搜索代码、名称或拼音" autocomplete="off" spellcheck="false" aria-label="搜索 A 股" enterkeyhint="search">
+            <div id="symbolSearchResults" class="symbol-results" hidden></div>
+          </label>
+          <div class="quote-px" id="qPx"></div>
+          <button class="btn btn-sm" id="enablePublicQuotes" type="button" aria-pressed="false" title="启用后会向公开行情源发送这 50 个股票代码和 3 个公开指数代码，以读取实时价格、分时和 K 线；不会发送数量、成本或盈亏。">启用公开行情</button>
+          <button class="btn btn-sm" id="refreshH" type="button">刷新</button>
+        </div>
+        <div class="stat-row" id="qSector"></div>
+        <div class="stage-tools">
+          <div class="seg" id="kFreq">
+            <button data-freq="minute" class="on" type="button">分时</button>
+            <button data-freq="day" type="button">日K</button>
+            <button data-freq="week" type="button">周K</button>
+            <button data-freq="month" type="button">月K</button>
+            <button data-freq="year" type="button">年K</button>
+          </div>
+          <div class="seg" id="kOverlay">
+            <button type="button" data-overlay="trend" class="on">趋势</button>
+            <button type="button" data-overlay="ma">均线</button>
+            <button type="button" data-overlay="boll">布林</button>
+            <button type="button" data-overlay="hs">头肩顶</button>
+          </div>
+          <div class="seg" id="kRange">
+            <button data-bars="120" class="on" type="button">半年</button>
+            <button data-bars="250" type="button">一年</button>
+            <button data-bars="750" type="button">三年</button>
+            <button data-bars="0" type="button">近15年</button>
+          </div>
+        </div>
+        <div class="chart tall" id="chartK"></div>
+        <div class="legend-note" id="qNote">分时、日K、周K、月K、年K。公开日线按数据源更新，盘中价格请看分时。</div>
+        <div id="kRead" class="k-read" hidden></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- signals -->
+  <div class="pane" id="signals-pane">
+    <div class="card">
+      <div class="card-head"><h2><span class="dot ok"></span>最新一期买卖信号 <span class="muted" style="font-weight:400;font-size:11.5px" id="sMeta"></span></h2></div>
+      <div class="card-body tight">
+        <div class="tbl-scroll"><table class="data" id="stable"></table></div>
+      </div>
+      <div class="legend-note">信号按上一交易日收盘数据生成，T+1 参考执行价；月度调仓。买卖动作需人工复核成交明细后执行。</div>
+    </div>
+  </div>
+
+  <!-- experts -->
+  <div class="pane" id="experts-pane">
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn" id="refreshE" type="button" disabled aria-disabled="true" title="本页面只读；不会重新收集行情或重算专家">本页只读 · 不重算专家</button>
+      <button class="btn" id="reloadE">读取已有结果</button>
+      <span id="loading" class="row" style="display:none"><span class="spin"></span><span class="muted">正在重算专家（10~30 秒）…</span></span>
+    </div>
+    <div class="callout" id="eMeta"></div>
+    <div class="stack mt" id="ecards"></div>
+  </div>
+
+  <!-- run -->
+  <div class="pane" id="run-pane">
+    <div class="grid-kpi" id="runKpis"></div>
+    <div class="card mt">
+      <div class="card-head"><h2><span class="dot ok"></span>平台能力说明</h2></div>
+      <div class="card-body">
+        <div class="callout">
+          <ol style="margin:6px 0 0 18px;line-height:1.9">
+            <li><b>盘中实时行情</b>：启用公开行情后，持仓/行情接口才会向新浪（腾讯回退）取实时价；页面仅在该模式下自动刷新。</li>
+            <li><b>日线数据集</b>：每日收盘后运行 <code>scripts/daily_pulse.py</code>，增量补齐当日 K 线与候选池快照，因子/专家意见即基于最新数据重算。</li>
+            <li><b>月度信号</b>：按运行配置评估；没有通过研究关口的信号只用于模拟。</li>
+            <li><b>美股</b>：交易链路尚未启用；背景信息也必须满足历史可知时间要求。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="card mt">
+      <div class="card-head"><h2>每日一条命令</h2></div>
+      <div class="card-body"><pre class="code">./.venv2/bin/python scripts/daily_pulse.py          # 收盘后：更新日线+候选池 → 更新专家意见
+./.venv2/bin/python -m quantlab.cli quote           # 随时：查看当前持仓实时行情
+./.venv2/bin/python -m quantlab.cli monitor         # 随时：重算专家今日意见
+./.venv2/bin/python -m quantlab.cli web             # 启动本看板</pre></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    当前展示模拟研究账户。历史结果尚未验证；数据不完整时不发布收益或可执行建议，不能视为券商持仓。
+  </div>
+</div>
+
+<script src="/static/portfolio_terminal_adapter.js"></script>
+<script src="/static/portfolio_terminal.js"></script>
+</body></html>

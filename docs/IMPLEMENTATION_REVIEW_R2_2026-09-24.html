@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QuantLab 落地验收 · 第二轮 · 2026-09-24</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
+    --tx:#e6edf3; --tx2:#9da7b3; --tx3:#6e7681;
+    --red:#f85149; --green:#3fb950; --amber:#d29922; --blue:#58a6ff; --purple:#bc8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:44px 26px 90px}
+  h1{font-size:29px;line-height:1.3;margin:0 0 8px;letter-spacing:-.4px}
+  .sub{color:var(--tx2);font-size:14px;margin-bottom:6px}
+  .stamp{display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+         font-size:12px;color:var(--tx3);background:var(--panel2);border:1px solid var(--line);
+         border-radius:6px;padding:3px 9px;margin:10px 0 26px}
+  h2{font-size:20px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 9px}
+  p{margin:9px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+       background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#a5d6ff}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:13px 15px;
+      overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.65;color:#c9d1d9}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--tx2);font-weight:600;font-size:12.5px}
+  td.n,th.n{text-align:right;font-family:ui-monospace,Menlo,monospace}
+  .verdict{background:linear-gradient(180deg,#1f2429,#171b20);border:1px solid var(--line);
+           border-left:3px solid var(--green);border-radius:9px;padding:18px 22px;margin:22px 0}
+  .verdict .k{font-size:12px;letter-spacing:1.4px;color:var(--green);font-weight:700;margin-bottom:7px}
+  .verdict p{margin:6px 0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:20px 0}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px 17px}
+  .kpi .v{font-size:22px;font-weight:700;font-family:ui-monospace,Menlo,monospace;letter-spacing:-.5px}
+  .kpi .l{font-size:12px;color:var(--tx2);margin-top:5px;line-height:1.5}
+  .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)} .neu{color:var(--blue)} .mut{color:var(--tx3)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;
+        border:1px solid;letter-spacing:.3px;white-space:nowrap}
+  .p-fix{color:var(--green);border-color:#2ea043;background:#12261a}
+  .p-open{color:var(--red);border-color:#8b2c28;background:#2b1512}
+  .p-part{color:var(--amber);border-color:#8a6d1f;background:#2a2210}
+  .p-note{color:var(--blue);border-color:#1f4b7a;background:#101f2e}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px 19px;margin:16px 0}
+  .box.badbox{border-left:3px solid var(--red)}
+  .box.okbox{border-left:3px solid var(--green)}
+  .box.warnbox{border-left:3px solid var(--amber)}
+  ul,ol{margin:9px 0;padding-left:22px}
+  li{margin:5px 0}
+  .tl{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.95;
+      background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 17px}
+  .tl .t{color:var(--purple)} .tl .f{color:var(--tx2)}
+  .foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);color:var(--tx3);font-size:12.5px}
+  .retract{background:#2a2210;border:1px solid #8a6d1f;border-radius:9px;padding:14px 18px;margin:16px 0}
+  .retract b{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>落地验收 · 第二轮</h1>
+<div class="sub">对象：15:17 → 15:49 的改动，以及 15:08 那轮预注册实验的实际产出</div>
+<div class="sub">方法：与 15:17 快照逐文件 diff、跑测试、实跑 CLI、加载实验产物复核、按哈希验证冻结副本</div>
+<div class="stamp">对照快照 /tmp/snap_1517/src_1517.tar.gz（sha256 80af4635…）· 当前读取于 15:52</div>
+
+<div class="verdict">
+  <div class="k">总体裁定</div>
+  <p><b>这一轮是真落地，不是补文档。</b>我上一轮提的 12 条里，7 条实质性推进或完成；更关键的是，他们主动做了几件我没想到要提的事：<code>prepared</code> 上下文的配置指纹校验、逐日行业暴露超限记录、把 <code>factor_panels</code>/<code>ic_matrix</code> 截断到 <code>:end</code> 堵产物前视、删掉美股那 46 只硬编码假池子。</p>
+  <p><b>预注册实验经得起验。</b>契约 15:08:46 落盘 → 15:09:30 出观测臂 → 15:15:10 出 200 次结果 → 15:19:12 归档冻结副本。<b>冻结副本 33/33 个代码文件哈希与契约记录完全一致</b>；<code>results.pkl</code> 与 <code>signals.json</code> 的哈希与改写前记录逐字节相同。跑的是注册当时那份代码和那份数据，没有事后调参。</p>
+  <p><b>结论：观察组在零假设第 70 百分位，单侧 p = 0.3035，没有优势。</b>这个数字站得住，因为零假设有真实离散度（std 1.16%，年化从 2.11% 到 12.93%），观测值落在中位上方 +0.55σ。<b>而且我验过：离散度不是「哪几期恰好调仓成功」的产物</b>（<code>corr(年化, 成交笔数) = 0.024</code>）。</p>
+</div>
+
+<div class="retract">
+<b>先收回我上一轮的一个错判。</b>我说过「55% 调仓被跳过 → 检验力归零」。这是错的。零假设 200 次的标准差 1.16%，分组看成交笔数从 103 到 751 笔，年化均值几乎不变（0.0404 / 0.0411 / 0.0415 / 0.0418）。<b>实验有真实检验力</b>，跳过的调仓降低精度但没有毁掉测量。我把「缺陷严重」和「仪器失效」混为一谈了。
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v ok">35/35</div><div class="l">测试全绿<br>上轮 1 个红灯已清</div></div>
+  <div class="kpi"><div class="v ok">33/33</div><div class="l">冻结代码哈希匹配<br>预注册纪律成立</div></div>
+  <div class="kpi"><div class="v neu">0.3035</div><div class="l">单侧蒙特卡洛 p<br>观测在第 70 百分位</div></div>
+  <div class="kpi"><div class="v ok">65/65</div><div class="l">active 字段零个<br>缺静态读取点</div></div>
+  <div class="kpi"><div class="v bad">37/69</div><div class="l">调仓求解仍失败<br>行业 UNKNOWN 未修</div></div>
+  <div class="kpi"><div class="v bad">0</div><div class="l">git 提交数<br>仍全是未跟踪</div></div>
+</div>
+
+<h2>一、逐条验收：他们声称的 vs 我实测的</h2>
+
+<table>
+<thead><tr><th style="width:34%">声称</th><th style="width:11%">结果</th><th>我的验证方式与实测值</th></tr></thead>
+<tbody>
+<tr><td>「35 项离线测试通过」</td><td><span class="pill p-fix">属实</span></td>
+<td>实跑 <code>unittest discover -s tests</code>：<b>Ran 35 tests, OK</b>（我这边 17.2s，他们记录 11.1s）。上一轮的红灯 <code>test_smoke.test_engine_run</code> 已清掉。</td></tr>
+<tr><td>「已运行 200 次随机对照」</td><td><span class="pill p-fix">属实</span></td>
+<td><code>trials.json</code> 200 条；<code>summary.json</code> 观测年化 0.046135、波动 0.045167、maxDD −0.042060——与我 15:12 在旧引擎上跑出的数字<b>逐位一致</b>，证明用的是注册时那份代码。</td></tr>
+<tr><td>「观察组约第 70 百分位，p = 0.30348」</td><td><span class="pill p-fix">算术无误</span></td>
+<td>独立复算：<code>(n&lt;obs).mean() = 0.700</code>；<code>(1+60)/(1+200) = 61/201 = 0.30348</code>。零假设分位：p10 2.89% / 中位 3.98% / p90 5.39% / max 12.93%。</td></tr>
+<tr><td>「输入、种子、配置、判据先于运算写入契约」</td><td><span class="pill p-fix">属实</span></td>
+<td>时间戳链：契约 <b>15:08:46</b> → 观测臂 <b>15:09:30</b> → 试验结果 <b>15:15:10</b> → 冻结副本 <b>15:19:12</b>。契约确实在运算之前。</td></tr>
+<tr><td>「该实验的冻结代码见 reproduction/ 目录」</td><td><span class="pill p-fix">属实</span></td>
+<td>把契约里 <code>provenance.code_sha256</code> 的 33 个条目逐个与 <code>reproduction/</code> 下的文件比对：<b>匹配 33，不匹配 0，缺失 0</b>。</td></tr>
+<tr><td>「40 份旧行情、原 results.pkl 和 signals.json 共 42 个文件哈希未变」</td><td><span class="pill p-part">部分属实</span></td>
+<td><code>preserved_inputs.json</code> 里存的是布尔 <code>true</code>，<b>不是哈希</b>，所以那句话不是这个文件支撑的。我改用 <code>before.json</code> 里改写前记录的真实哈希核对 <code>results.pkl</code> / <code>signals.json</code>：<b>两个都逐字节一致</b>。结论成立，但证据链该补哈希。</td></tr>
+<tr><td>「回测返回 blocked_data，不是成功回测」</td><td><span class="pill p-fix">属实</span></td>
+<td>实跑：<code>[status] blocked_data ['dataset_manifest_missing', '…/data/research/manifest.json', 'legacy_caches_are_not_PIT_raw_execution_data']</code>，且紧跟 <code>[performance] 未验证，绩效指标不发布</code>。</td></tr>
+<tr><td>「信号非可执行」</td><td><span class="pill p-fix">属实</span></td>
+<td>实跑 <code>signals</code>：<code>executable: false</code>、<code>account_type: "simulation"</code>、<code>promotion_approved: false</code>、<code>trades: []</code>。</td></tr>
+<tr><td>「目前默认入口返回 blocked_data…是已实现的数据门禁」</td><td><span class="pill p-fix">属实</span></td>
+<td><code>data/research/</code> 目录根本不存在，<code>research_suite.py</code> 走 blocked 分支并写 <code>promotion_gate.json</code>，产出 <code>output/runs/dab3ee2cc57755de7276-18e9d8d18214</code>。</td></tr>
+<tr><td>「未执行浏览器视觉验收」</td><td><span class="pill p-note">自认</span></td>
+<td><code>verification.json</code> 里 <code>browser_visual_qa: false</code>，诚实标注。5 个 API 路由是代码级检查。</td></tr>
+<tr><td>「先保存改动前哈希和源码归档，再建立本地 Git」</td><td><span class="pill p-open">不属实</span></td>
+<td><code>git log</code> → <b>your current branch 'main' does not have any commits yet</b>；<code>git status</code> 全部 <code>??</code>。<b>仓库 init 了但零提交。</b>前半句（哈希 + 归档）成立，后半句没有。</td></tr>
+</tbody>
+</table>
+
+<h2>二、我上一轮 12 条行动清单的落实情况</h2>
+
+<table>
+<thead><tr><th style="width:5%">#</th><th style="width:31%">上轮要求</th><th style="width:11%">状态</th><th>本轮实际情况</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>git init</code> + 提交，审查绑定 commit</td><td><span class="pill p-open">未做</span></td>
+<td>仓库已 init，<b>但 0 个提交</b>，所有文件仍是未跟踪状态。这条是所有其他结论可追溯的前提，仍排在第一位。</td></tr>
+<tr><td>2</td><td>修 <code>cached_proxy()</code> 行业缺失</td><td><span class="pill p-open">未修</span></td>
+<td>脚本第 45 行的 <code>else "UNKNOWN"</code> 还在，27/27 仍是 UNKNOWN。但在实施记录里被<b>明确承认为限制</b>，没有藏。</td></tr>
+<tr><td>3</td><td>给 <code>allocate()</code> 加行业暴露覆盖率门禁</td><td><span class="pill p-part">部分</span></td>
+<td>引擎新增逐日 <code>actual_sector_exposure</code> 与 <code>unresolved_sector_breaches</code>——实测 <b>UNKNOWN 超限 437 天</b>被如实记录。但这是<b>记录不是阻断</b>：超限日照常跑完。<code>allocation.py</code> 本身一行未改，仍失败 37/69。</td></tr>
+<tr><td>4</td><td>先跑 20 次确认两臂分离，再决定 200 次</td><td><span class="pill p-fix">已做（超额）</span></td>
+<td>直接跑了 200 次。事后看这个决定是对的——零假设 std 1.16%、跨度 2.11%→12.93%，有真实离散度，20 次反而不够。</td></tr>
+<tr><td>5</td><td>让 <code>sources.py</code> 产出契约字段</td><td><span class="pill p-part">换了解法</span></td>
+<td>没有硬造字段，而是<b>把契约收紧</b>：<code>validate()</code> 现在要求 bar 必须含 <code>open_status</code>/<code>open_status_available_at</code>、证券记录必须含 <code>sector</code>/<code>active</code>/<code>is_st</code>/<code>listing_date</code>、单位必须声明 <code>currency</code>/<code>amount_unit</code>/<code>turnover_unit</code>。结果是生产入口诚实阻断。方向正确，但生产路径仍不通。</td></tr>
+<tr><td>6</td><td>生成 <code>data/research/manifest.json</code></td><td><span class="pill p-open">未做</span></td>
+<td>目录不存在。但他们写了 <code>docs/DATASET_CONTRACT.md</code>——一份真正的外部数据导入规范（清单字段、逐证券日线字段、历史证券记录、日历、基准口径），并明说「现有公开缓存不满足完整契约，系统不会生成虚假的历史披露时间或原始价格来通过门禁」。<b>这是把球踢回给数据，而不是伪造数据。</b></td></tr>
+<tr><td>7</td><td>删除或改写遗留红灯测试</td><td><span class="pill p-fix">已做</span></td>
+<td>35/35 全绿。另新增 <code>tests/test_data_execution.py</code>、<code>tests/test_parameters.py</code>。</td></tr>
+<tr><td>8</td><td>标定专家 softmax 温度</td><td><span class="pill p-open">未做</span></td>
+<td><code>experts.py</code> 哈希未变，<code>tau = max(std(q), 0.015)</code> 原样保留。n=40 下 12 期均值 IC 的 SE ≈ 0.046，0.04 的差仍被放大成约 14 倍权重比。</td></tr>
+<tr><td>9</td><td><code>experts_score</code> 改用注入 cfg</td><td><span class="pill p-open">未做</span></td>
+<td>第 82 行 <code>cfg = CONFIG.factors</code>、第 179 行 <code>CONFIG.factors.crowding_quantile</code> 仍在。跨配置对照会静默用错参数。</td></tr>
+<tr><td>10</td><td><code>ACTIVE</code> 白名单与实际读取点对账</td><td><span class="pill p-fix">已做</span></td>
+<td><code>parameter_audit.json</code>：104 个字段，<b>65 个 active 里 0 个缺静态读取点</b>；39 个 inactive 里 4 个有读取点。这比上一轮（白名单含无读取点的 <code>cost.min_trade_value</code>）干净得多。</td></tr>
+<tr><td>11</td><td>清理死配置字段</td><td><span class="pill p-part">部分</span></td>
+<td>没有删，而是改成<b>显式分类 + 强制报错</b>：39 个标为 inactive，改动它们会抛 <code>inactive_config_field</code>。加上 <code>config.py</code> 头部改为「兼容参数集中定义；支持状态以 config_validation.py 和参数审计为准」。这比删除更可维护。</td></tr>
+<tr><td>12</td><td>决定 <code>Regime</code> 去留</td><td><span class="pill p-part">部分</span></td>
+<td><code>regime_mult</code> 仍未被 <code>evaluate()</code> 使用；<code>risk.regime_vol_quantile</code> 有读取点但被声明 inactive。文档与代码的「深熊极端降仓」不一致仍未消除。</td></tr>
+</tbody>
+</table>
+
+<h2>三、这一轮新做的、我没要求但做对了的事</h2>
+
+<div class="box okbox">
+<ul>
+<li><b><code>prepared</code> 上下文的配置指纹校验。</b><code>prepare()</code> 现在写入 <code>preparation_config = fingerprint(asdict(cfg))</code>，<code>run_dataset()</code> 开头校验 <code>p["version"] != dataset.version or p["preparation_config"] != fingerprint(asdict(cfg))</code> 就抛 <code>prepared_context_version_mismatch</code>。<b>这正好堵住我上一轮那种手工注入 <code>eligible</code> 的用法</b>——如果注入的上下文和当前配置/数据不一致，直接拒绝，而不是静默算出一个假结果。</li>
+<li><b>逐日行业暴露与超限记录。</b>每一天的 state 里现在有 <code>actual_sector_exposure</code> 和 <code>unresolved_sector_breaches</code>。这是我上轮要的门禁的<b>可观测部分</b>，缺的只是「超限就阻断」那一步。</li>
+<li><b>产物前视截断。</b><code>factor_panels</code> 与 <code>ic_matrix</code> 现在写成 <code>{k:v.loc[:end]}</code> / <code>.loc[:end]</code>。上一轮这两个字段是<b>全样本</b>保存的——存档里带着未来数据。这个细节很容易漏，他们抓到了。</li>
+<li><b>删掉美股假池子。</b><code>_us_candidates()</code> 里那份硬编码 46 只票的列表（AAPL/MSFT/NVDA…）整个删掉，改成 <code>raise RuntimeError("US stock selection/execution is disabled…")</code>。那本来就不是股票池，是一份装饰。</li>
+<li><b>缓存新鲜度收紧到「必须当天抓取」。</b>从「非空就用」→「<code>fetched_at</code> 是今天才用」。这直接命中我最初审计里的缓存问题。</li>
+<li><b>样本起点改为首个有效信号。</b><code>nav</code> 从 2020-09-24（1455 天，前段全零收益）改成 2020-12-31（1391 天）。上一轮 <code>daily_return != 0</code> 的比例被暖机段稀释的问题没了。若无有效信号则 <code>blocked_result(["insufficient_factor_history_or_eligible_universe"])</code>。</li>
+<li><b>最短持有期的预算约束。</b>锁定仓先按 <code>max(target, 现权重)</code> 保留，剩余自由度按 <code>budget = min(1-cash_buffer, gross_scale) - 锁定仓之和</code> 等比缩放。之前只是「把 young 加进 selected」，没有预算一致性。</li>
+<li><b><code>finalize_run_identity</code> 防止换版本重存。</b>同一 result 若代码版本变了再存会抛 <code>cannot_resave_result_under_different_source_version</code>。产物不可变这件事从「约定」变成了「断言」。</li>
+<li><b><code>promotion_gate()</code> 把方案第三、四关写成了代码。</b>要求 <code>accounting_passed</code>/<code>temporal_passed</code>/<code>pit_coverage_passed</code>/<code>stress_passed</code>/<code>execution_calibrated</code>、≥3 个不重叠 fold 且 ≥2/3 为正、<code>incremental_ci.lower &gt; 0</code>、<code>forward_months ≥ 6</code>、<code>forward_model_unchanged</code>。默认 <code>promotion_approved=False</code>，并自带一句 <i>"Few six-month windows can leave economically meaningful effects indistinguishable from noise."</i></li>
+<li><b><code>research_suite.py</code> 的共同账本对照。</b>买持/月度等权/历史波动匹配等权全部走同一个 <code>Ledger</code>，加 4 个压力场景（费用翻倍、成交额降 70%、连续 5 日禁成交、执行延迟 1 日），并自认 <i>"correlation_and_tail_replays_require_additional_scenarios"</i>、<i>"model_OOS_outcomes_not_supplied"</i>。</li>
+<li><b><code>DATASET_CONTRACT.md</code>。</b>一份可执行的外部数据导入规范，且明说 <i>"宣称公司行动完整但提供空表，意味着供应商确认该区间无公司行动，而不是未取得数据"</i>——把「空」和「没有」区分开了。</li>
+</ul>
+</div>
+
+<h2>四、仍然挡在前面的问题</h2>
+
+<h3>4.1 行业 UNKNOWN 未修，且新门禁有个洞 <span class="pill p-open">P0</span></h3>
+<p><code>contracts.validate()</code> 新增了 <code>security_history_missing:sector</code>，但它的判据是 <code>self.instruments["sector"].isna().any()</code>——<b>只查空值，不查哨兵值</b>。诊断代理把 sector 填成字符串 <code>"UNKNOWN"</code>，非空，于是这条检查<b>放行</b>。实测 <code>validate()</code> 返回 4 条错误，其中并没有 <code>security_history_missing</code>。</p>
+<p>这正是它想抓的那类东西。建议：把 <code>"UNKNOWN"</code>/<code>"NA"</code>/<code>""</code> 加入哨兵值黑名单，或在 <code>universe_mode != "snapshot_research"</code> 时禁止 UNKNOWN 行业。</p>
+<p>后果链未变：27/27 UNKNOWN → 暴露矩阵 1 行 → <code>max_gross</code> 塌到 0.30 → <b>37/69 调仓仍求解失败</b> → 观测臂 74.1% 现金、年化 4.51%、波动 4.26%。</p>
+
+<h3>4.2 行业超限门禁只记录不阻断 <span class="pill p-open">P0</span></h3>
+<p><code>unresolved_sector_breaches</code> 实测在 <b>437 天</b>记录到 UNKNOWN 行业超限，但引擎照常跑完并把 <code>status</code> 置为 <code>unverified_data_gaps</code>（原因是 benchmark/公司行动/原始价三条，<b>不含行业超限</b>）。建议把「持续行业超限」提升为 run 级原因，或至少在 <code>promotion_gate</code> 里加一条 <code>sector_exposure_unresolved</code>。</p>
+
+<h3>4.3 <code>git</code> 零提交 <span class="pill p-open">P0</span></h3>
+<p>实施记录写「再建立本地 Git」，但 <code>git log</code> 报 no commits，<code>git status</code> 全是 <code>??</code>。<code>runs.py</code> 已经在收集每次运行的代码哈希了，仓库自身却没有一次提交——审查结论依然无法绑定到版本。这条从第一轮排到现在，一直是第一位。</p>
+
+<h3>4.4 专家权重问题原封不动 <span class="pill p-part">P1</span></h3>
+<p><code>experts.py</code>、<code>scoring.py</code>、<code>risk.py</code>、<code>allocation.py</code> 四个文件自 15:17 起<b>一字未改</b>（哈希比对确认）。所以上轮的专家 softmax 温度未标定、<code>experts_score</code> 读模块级 <code>CONFIG</code> 两条，本轮零进展。</p>
+
+<h3>4.5 分类与文档的零星不一致 <span class="pill p-note">P2</span></h3>
+<table>
+<thead><tr><th style="width:36%">项</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>research.enable_announcements</code> 声明 inactive 但被引擎读取</td>
+<td>引擎里有 <code>if cfg.research.enable_announcements: return blocked_result([...])</code>，但 <code>validate_config</code> 会先把任何改动它的配置抛掉 → <b>那段阻断代码不可达</b>。要么把它移入 active，要么承认它是死分支。</td></tr>
+<tr><td>4 个 inactive 字段有读取点</td>
+<td><code>portfolio.weight_max_dev</code>、<code>risk.regime_vol_quantile</code>、<code>research.risk_aversion</code>、<code>research.enable_announcements</code>。多数是「读了但走不到」的死路径（如 <code>risk_aversion</code> 只在 <code>expected</code> 非空时用，而引擎从不传 <code>expected</code>）。建议在审计输出里区分「有读取点」和「有可达读取点」。</td></tr>
+<tr><td><code>preserved_inputs.json</code> 存布尔而非哈希</td>
+<td>「42 个文件哈希未变」这句话本身是对的（我用 <code>before.json</code> 独立验过 <code>results.pkl</code> 与 <code>signals.json</code>），但支撑它的产物里没有哈希。补上即可，成本极低。</td></tr>
+<tr><td><code>Regime</code> 的去留仍未定</td>
+<td><code>regime_mult</code> 参数收了不用；「深熊极端降仓」在文档里还写着，代码里已无。</td></tr>
+</tbody>
+</table>
+
+<h2>五、关于那个 p = 0.3035，怎么读</h2>
+
+<p>这是本轮唯一一个「关于策略」的结论，值得单独说清楚。</p>
+
+<table>
+<thead><tr><th style="width:30%">读数</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><b>能说的</b></td>
+<td>在一个 40 只事后快照池、复权价归一为假设单位、开盘可交易状态乐观近似、行业全部归为 UNKNOWN、月频冻结风控的<b>诊断条件</b>下，修复后的选股规则年化 4.61%，落在 200 个匹配随机篮子的第 70 百分位。以 <code>p &gt; 0.10 视为未击败条件随机选择</code> 的预注册门槛，<b>它没有击败</b>。</td></tr>
+<tr><td><b>不能说的</b></td>
+<td>不能说这个池子里没有 alpha，不能说换池子会更好，不能说 4.61% 是修复后的可实现收益。契约的 <code>does_not_test</code> 字段自己写着 <i>"absence of all possible alpha or superiority of another universe"</i>，<code>next_stage</code> 是 <code>blocked_pending_PIT_and_predeclared_OOS_evidence</code>。</td></tr>
+<tr><td><b>量级感</b></td>
+<td>观测值比零假设中位高 <b>0.55 个标准差</b>。零假设的 p90 是 5.39%，观测 4.61% 在它下面。要在 n=200 的检验里把 0.55σ 变成显著，需要大约 3 倍于当前的样本量或约 2 倍的信噪比。</td></tr>
+<tr><td><b>最可能的解释</b></td>
+<td>不是「模型没用」，而是<b>输入的横截面太窄</b>：候选池实际只有 33–38 只（<code>actual_eligible_counts</code> 中位 38），扣掉 55% 无法求解的月份，真正参与比较的换仓次数很少。这解释了为什么零假设离散度只有 1.16%。<b>先把行业修好、把合格池做宽，再重跑，这个 p 值才有讨论价值。</b></td></tr>
+</tbody>
+</table>
+
+<div class="box warnbox">
+<b>一个需要留意的反身性问题：</b>「随机篮子」的对照组是用同一份 UNKNOWN 行业数据跑同一个 <code>allocate()</code> 的。所以<b>两臂共享同一个退化</b>。配对是正确的，但它检验的是「在同样残缺的执行条件下，选股规则有没有增量」，而不是「这套策略能不能赚钱」。这两件事很容易被读者混为一谈，建议在 <code>summary.json</code> 的 <code>interpretation</code> 里再点一句。
+</div>
+
+<h2>六、更新后的行动清单</h2>
+
+<table>
+<thead><tr><th style="width:5%">#</th><th style="width:31%">动作</th><th style="width:8%">级别</th><th>变化</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>git add -A &amp;&amp; git commit</code>，把审查绑定到 commit hash</td><td><span class="pill p-open">P0</span></td><td>连续两轮未做，仓库已 init 但 0 提交</td></tr>
+<tr><td>2</td><td>把 <code>"UNKNOWN"</code> 列入 <code>security_history_missing</code> 的哨兵值判定</td><td><span class="pill p-open">P0</span></td><td><b>新增</b>：新门禁只查空值不查哨兵，实测放行了 UNKNOWN 行业</td></tr>
+<tr><td>3</td><td>把持续行业超限提升为 run 级原因或 <code>promotion_gate</code> 一条</td><td><span class="pill p-open">P0</span></td><td><b>升级</b>：已记录（437 天）但未阻断</td></tr>
+<tr><td>4</td><td>修 <code>cached_proxy()</code> 行业注入（或诊断运行显式设 <code>max_sector_weight=1.0</code> 并声明）</td><td><span class="pill p-open">P0</span></td><td>未动</td></tr>
+<tr><td>5</td><td>行业修好后重跑 200 次对照，对比新旧 p 值</td><td><span class="pill p-open">P0</span></td><td><b>新增</b>：当前 p=0.3035 是在退化输入下得到的</td></tr>
+<tr><td>6</td><td>标定专家 softmax 温度；<code>experts_score</code> 改用注入 cfg</td><td><span class="pill p-part">P1</span></td><td>四个相关文件哈希未变，零进展</td></tr>
+<tr><td>7</td><td>把 <code>research.enable_announcements</code> 归入 active 或删除该分支</td><td><span class="pill p-note">P2</span></td><td><b>新增</b>：不可达的阻断代码</td></tr>
+<tr><td>8</td><td><code>preserved_inputs.json</code> 改存哈希</td><td><span class="pill p-note">P2</span></td><td><b>新增</b>：当前只有布尔</td></tr>
+<tr><td>9</td><td>决定 <code>Regime</code> 去留，统一文档与代码</td><td><span class="pill p-note">P2</span></td><td>未动</td></tr>
+<tr><td>10</td><td>补齐 <code>data/research/manifest.json</code> 与真实指数基准</td><td><span class="pill p-open">P0</span></td><td>契约文档已就位，只差数据</td></tr>
+</tbody>
+</table>
+
+<h2>七、一句话</h2>
+
+<div class="box okbox">
+<p><b>这一轮把「工程上能不能信任」和「策略上有没有效」这两件事分开了，而且分得对。</b>账本、契约、门禁、预注册、冻结副本、promotion_gate——该有的机制都在，35 个测试全绿，200 次对照经得起哈希复验，结论是「没有优势」而不是「有 15% 年化」。</p>
+<p>剩下的问题集中在同一处：<b>行业字段缺失这一个输入缺陷，同时污染了配权（55% 调仓失败）和门禁（新检查放行 UNKNOWN 哨兵值）</b>。它不是策略问题，是数据问题，修起来不复杂。但在这个修好之前，那个 4.61% 和 0.3035 只描述了一台没校准好的仪器，不描述这套策略。</p>
+<p>另外提醒一句：<b>仓库仍然是零提交状态。</b>这轮所有「已修复」结论都绑在我 15:52 读到的文件上，而上一轮的经验是 9 分钟内变了 6 次。</p>
+</div>
+
+<div class="foot">
+对照快照 <code>/tmp/snap_1517/src_1517.tar.gz</code>（15:17）。本轮全部结论基于只读操作：源码 diff、<code>unittest</code>、实跑 CLI 与 <code>research_suite.py</code>、加载 <code>observed.pkl</code>/<code>trials.json</code> 复算、按 sha256 校验冻结副本与输入保全。<br>
+<b>未修改任何生产代码、缓存、实验产物或他人脚本。</b>实跑 CLI 与 <code>research_suite</code> 时因 <code>run_id</code> 确定性而写入已存在的 run 目录，<code>persist_run</code> 对已存在目录不覆盖，产物未受影响。<br>
+第一轮报告见 <code>docs/IMPLEMENTATION_REVIEW_2026-09-24.html</code>（绑定 15:17 快照，作为历史留档）。
+</div>
+
+</div>
+</body>
+</html>

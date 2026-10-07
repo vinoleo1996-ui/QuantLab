@@ -61,8 +61,8 @@ def fetch_spot_candidates() -> pd.DataFrame | None:
         df["pre_close"] = pd.to_numeric(df["settlement"], errors="coerce")
         keep.append("pre_close")
     df["code"] = df["code"].astype(str).str.zfill(6)
-    df["mktcap"] = df["mktcap"].fillna(0) * 1e4
     df["float_mktcap"] = df["float_mktcap"].fillna(df["mktcap"]).fillna(0) * 1e4
+    df["mktcap"] = df["mktcap"].fillna(0) * 1e4
     df["source"] = "sina"
     return df.set_index("code", drop=False)
 

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QuantLab 后续优化计划 · 评估 · 2026-09-24</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
+    --tx:#e6edf3; --tx2:#9da7b3; --tx3:#6e7681;
+    --red:#f85149; --green:#3fb950; --amber:#d29922; --blue:#58a6ff; --purple:#bc8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:44px 26px 90px}
+  h1{font-size:29px;line-height:1.3;margin:0 0 8px;letter-spacing:-.4px}
+  .sub{color:var(--tx2);font-size:14px;margin-bottom:6px}
+  .stamp{display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+         font-size:12px;color:var(--tx3);background:var(--panel2);border:1px solid var(--line);
+         border-radius:6px;padding:3px 9px;margin:10px 0 26px}
+  h2{font-size:20px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 9px}
+  p{margin:9px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+       background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#a5d6ff}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:13px 15px;
+      overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.65;color:#c9d1d9}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--tx2);font-weight:600;font-size:12.5px}
+  td.n,th.n{text-align:right;font-family:ui-monospace,Menlo,monospace}
+  .verdict{background:linear-gradient(180deg,#1f2429,#171b20);border:1px solid var(--line);
+           border-left:3px solid var(--blue);border-radius:9px;padding:18px 22px;margin:22px 0}
+  .verdict .k{font-size:12px;letter-spacing:1.4px;color:var(--blue);font-weight:700;margin-bottom:7px}
+  .verdict p{margin:6px 0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:20px 0}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px 17px}
+  .kpi .v{font-size:22px;font-weight:700;font-family:ui-monospace,Menlo,monospace;letter-spacing:-.5px}
+  .kpi .l{font-size:12px;color:var(--tx2);margin-top:5px;line-height:1.5}
+  .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)} .neu{color:var(--blue)} .mut{color:var(--tx3)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;
+        border:1px solid;letter-spacing:.3px;white-space:nowrap}
+  .p-ok{color:var(--green);border-color:#2ea043;background:#12261a}
+  .p-no{color:var(--red);border-color:#8b2c28;background:#2b1512}
+  .p-part{color:var(--amber);border-color:#8a6d1f;background:#2a2210}
+  .p-info{color:var(--blue);border-color:#1f4b7a;background:#101f2e}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 20px;margin:18px 0}
+  .box.hot{border-left:3px solid var(--red)}
+  .box.good{border-left:3px solid var(--green)}
+  .box.info{border-left:3px solid var(--blue)}
+  .box.me{border-left:3px solid var(--purple)}
+  ul{margin:9px 0;padding-left:22px} li{margin:5px 0}
+  ol{margin:9px 0;padding-left:22px}
+  .foot{margin-top:50px;padding-top:18px;border-top:1px solid var(--line);color:var(--tx3);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>《QuantLab 后续优化计划》评估</h1>
+<div class="sub">针对「从工程修复走向可验证的策略」方案的合理性与现状准确性核查</div>
+<div class="stamp">核查基线 16:10:19 · 66 个 .py · 47 tests OK · git 提交 1（<code>1984edf</code>, 15:54:56）</div>
+
+<div class="verdict">
+  <div class="k">总判断</div>
+  <p><b>方案的技术判断质量很高，我基本认同它的方向。但它第一章「现状裁定」已经过期：</b>它列的 5 条 P0 里，<b>4 条已经在代码里实现了</b>；它点名要「明确修正」的 2 处设计，1 处已经修好、1 处是事实错误。</p>
+  <p>更关键的是：<b>方案把它最想做的事（P2 对照流水线）写成了独立阶段，而它 100% 依赖 P1 的真实数据</b>。在 P1 落地前，P2 一次都跑不了——第一道门就会拦下。</p>
+  <p><b>但方案里最核心的那个判断是对的，而且是整份文档里最重要的判断：数据是关键路径。</b>这一点抓准了，其余问题都是它的下游。方案对幸存者偏差、PIT 时间语义、静默降级的理解，比大多数同类文档都扎实。</p>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v ok">23/23</div><div class="l">方案点名的参数与 <code>config.py</code> 实际值全部一致</div></div>
+  <div class="kpi"><div class="v warn">4/5</div><div class="l">P0 条目已在代码中实现</div></div>
+  <div class="kpi"><div class="v bad">1/2</div><div class="l">「需修正的设计」中已修 / 事实错误</div></div>
+  <div class="kpi"><div class="v neu">已实现</div><div class="l">P2 的 1000 次对照 + 7 项消融已在 <code>pipeline.py</code></div></div>
+  <div class="kpi"><div class="v bad">0 次</div><div class="l">P2 当前可运行次数（<code>qualification</code> 直接拦下）</div></div>
+  <div class="kpi"><div class="v warn">7</div><div class="l">我提出的技术缺陷（其中 3 条我自己的错）</div></div>
+</div>
+
+<h2>一、事实核验：方案的「现状」断言逐条对账</h2>
+
+<p>方案第一章描述的是「当前实际状态」，这部分是可验证的。我逐条核了。</p>
+
+<table>
+<thead><tr><th style="width:30%">方案的断言</th><th style="width:9%">结论</th><th>实测</th></tr></thead>
+<tbody>
+<tr>
+  <td>「目前完成的是账本、评分修复、数据与研究门禁的基础工程；<b>新的机会识别、防踩踏和前向验证仍未形成完整流程</b>」</td>
+  <td><span class="pill p-no">过期</span></td>
+  <td>机会识别已实现：<code>strategy/opportunity.py</code>（10 特征、留一行业均值、滚动残差、开盘到开盘标签、内容寻址 <code>model_version</code>）。防踩踏已实现：<code>strategy/crowding.py</code>（下行相关性连通分量 + 过热 + 流动性）。前向验证已实现：<code>forward.py</code> + <code>research.record_forward</code>。完整流程也已实现：<code>pipeline.py</code> 195 行。<br><b>正确表述应该是「已建成但未在合格数据上运行过」。</b></td>
+</tr>
+<tr>
+  <td>「实施记录中有 <b>35 项</b>离线测试通过记录」</td>
+  <td><span class="pill p-part">过期</span></td>
+  <td>实测 <b>47 项全绿</b>（16:10:19）。35 是 15:34 的数字。</td>
+</tr>
+<tr>
+  <td>「正式运行仍为 <code>blocked_data</code>」</td>
+  <td><span class="pill p-ok">成立</span></td>
+  <td>实测成立。<code>data/research/manifest.json</code> 不存在；<code>qualification()</code> 因 <code>historical_industry_incomplete</code> 等理由返回 <code>blocked_data</code>。</td>
+</tr>
+<tr>
+  <td>「当前已经有 <code>.git</code>，但<b>尚无提交</b>」</td>
+  <td><span class="pill p-no">事实错误</span></td>
+  <td><b>已有 1 个提交</b>：<code>1984edf</code>「chore: freeze repaired ledger baseline before opportunity research」，15:54:56，作者 Codex。<br><b>而且方案附带的 <code>docs/REVIEW_RESPONSE_V3_2026-09-24.md</code> 自己写了「本次实现基线：<code>1984edf</code>」和「『仓库未提交』：现已冻结基线 1984edf」——方案与自己的附件自相矛盾。</b></td>
+</tr>
+<tr>
+  <td>「参数登记明确区分『已接入主流程』『仅有接口』『未支持』」<br><span class="mut">列为 P0 待办</span></td>
+  <td><span class="pill p-ok">已实现</span></td>
+  <td><code>config_validation.py</code> 已有 <code>ACTIVE</code> 白名单 + <code>status()</code> 返回 <code>active</code> / <code>inactive_or_fixed_reject_overrides</code>，且对「声明为 inactive 却被改动」直接 raise。</td>
+</tr>
+<tr>
+  <td>「将投资约束独立为 <code>Mandate</code>」<br><span class="mut">列为 P0 待办</span></td>
+  <td><span class="pill p-part">已实现但未生效</span></td>
+  <td><code>mandate.py</code> 存在，<code>engine.py:18,93</code> 已接线。<b>但写的是 <code>mandate = None if diagnostic else Mandate.from_config(self.cfg)</code>——诊断模式下整个绕过</b>，而当前所有能跑的运行都是诊断模式。所以「已建」但「今天不生效」。方案应该这么写。</td>
+</tr>
+<tr>
+  <td>「补查公司行动与卖出税费，包括<b>持有期相关的股息税</b>处理」<br><span class="mut">列为 P0 待办</span></td>
+  <td><span class="pill p-ok">已实现</span></td>
+  <td><code>backtest/tax.py:dividend_tax_rate()</code>：≤1月 20%、≤1年 10%、&gt;1年 0%（2015-09-08 前 5%），按卖出时点判定持有期，<code>ex_date &lt; 2013-01-01</code> 直接 raise <code>unsupported_dividend_tax_period</code>。<b>规则正确</b>，且由 <code>ledger.py:128</code> 实际调用。</td>
+</tr>
+<tr>
+  <td>「将研究批准条件从传入布尔值，改为<b>校验实际证据文件、版本、覆盖区间和运行结果</b>」<br><span class="mut">列为 P0 待办</span></td>
+  <td><span class="pill p-ok">已实现</span></td>
+  <td><code>evidence.py:verify_bundle()</code>：7 个角色、逐个 sha256 校验、<code>identity</code> 与 <code>coverage</code> 双重一致、必须有 <code>measurements</code> 实测明细、<b>显式拒绝裸布尔</b>、恒返回 <code>promotion_approved=False</code>。</td>
+</tr>
+<tr>
+  <td>「<b>需要明确修正一处设计</b>：配权器仍使用『权重和等于指定仓位』的约束；预期收益入口尚未接入主流程」</td>
+  <td><span class="pill p-no">一半错误</span></td>
+  <td><code>allocation.py:34</code> 已是 <code>{'type':'ineq' if expected is not None else 'eq', ...}</code>——<b>有预期收益时毛敞口约束就是不等式，现金通道已存在</b>。<br>且 <code>engine.py:249</code>（opportunity 路径）<b>已经传入 <code>expected</code></b>。只有 legacy 路径（<code>engine.py:301</code>）不传——那是设计使然，legacy 本来就没有预测。<br>实测：<code>expected=-3%</code> → 毛敞口 <code>0.0000</code>，持仓 0 只。</td>
+</tr>
+<tr>
+  <td>「随机对照默认运行 <b>1,000 次</b>，固定种子 20260924」</td>
+  <td><span class="pill p-ok">已实现</span></td>
+  <td><code>pipeline.py:18</code> 的 <code>DEFAULT_PROTOCOL</code>：<code>random_trials=1000, seed=20260924</code>。候选也已是 <code>[equal, ridge .1, ridge 1, ridge 10]</code>，与方案策略章一字不差。</td>
+</tr>
+<tr>
+  <td>「此前 200 次实验<b>约位于第 70 百分位</b>」</td>
+  <td><span class="pill p-ok">准确</span></td>
+  <td>与我上轮实测一致（percentile = 0.700，MC p = 0.3035）。<b>他正确读了我的报告。</b></td>
+</tr>
+<tr>
+  <td>「36 个月训练、6 个月验证、6 个月测试」/「每代最多 12 个预登记配置」/「相关系数 0.70」/「共同样本不足 30 日归未知组」/「每组上限 30%」/「风险厌恶 5」/「过热与流动性惩罚 0.01」/「14% 目标波动」/「单股 6%、单ETF 20%、行业 25%、至少 2% 现金」/「最多 20 只股票 3 只 ETF」/「ADV 1%」/「最短持有 20 日」/「前 10% 新增、连续两次跌出前 30% 退出」</td>
+  <td><span class="pill p-ok">全部一致</span></td>
+  <td>逐一对照 <code>config.py</code>，<b>23 个参数全部精确一致</b>：<code>train_months=36</code>、<code>validation_months=6</code>、<code>test_months=6</code>、<code>max_trials=12</code>、<code>downside_corr=0.7</code>、<code>max_cluster_weight=0.3</code>、<code>risk_aversion=5.0</code>、<code>crowding_cost=0.01</code>、<code>liquidity_cost=0.01</code>、<code>target_vol=0.14</code>、<code>max_stock_weight=0.06</code>、<code>max_etf_weight=0.2</code>、<code>max_sector_weight=0.25</code>、<code>cash_buffer=0.02</code>、<code>a_share_positions=20</code>、<code>max_etfs=3</code>、<code>participation=0.01</code>、<code>min_holding_period_days=20</code>、<code>entry_percentile=0.9</code>、<code>exit_percentile=0.7</code>、<code>exit_reviews=2</code>、<code>horizon=20</code>、回撤档位 <code>0.10/0.15/0.18/0.20</code>。<br><b>说明这份方案是拿着很新的代码快照写的——问题不在「不了解现状」，而在「第一章的定性落后于自己掌握的数字」。</b></td>
+</tr>
+</tbody>
+</table>
+
+<h2>二、P2 的绝大部分已经落地了</h2>
+
+<p>方案把 P2 描述为待建，但 <code>quantlab/pipeline.py</code>（195 行）已经实现了它要求的大部分内容：</p>
+
+<table>
+<thead><tr><th style="width:34%">方案 P2 的要求</th><th style="width:9%">状态</th><th>代码位置</th></tr></thead>
+<tbody>
+<tr><td>随机对照 1000 次，固定种子 20260924</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:18,112-124</code></td></tr>
+<tr><td>每次生成固定随机优先级，逐期只从当时合格池选择</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:113-118</code>：按 <code>rng.permutation</code> 重排 <code>mu</code> 的横截面归属，保留收益分布、打散排序</td></tr>
+<tr><td>不用全样本已实现波动事后调平</td><td><span class="pill p-ok">已实现</span></td><td>对照组用 <code>vol_matched_equal</code> 作为基准，<b>由账户实际波动匹配，不是事后缩放</b></td></tr>
+<tr><td>对照：买入持有 / 月度等权 / 波动匹配等权 / 修复后旧策略</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:107</code>：<code>('buy_hold','monthly_equal','vol_matched_equal','repaired_legacy')</code></td></tr>
+<tr><td>指数与可交易 ETF 对照，分别标注价格/总收益/扣费收益</td><td><span class="pill p-part">部分</span></td><td><code>benchmark=dict(identity=..., return_basis=ds.manifest.get('benchmark_return_basis','unspecified'))</code>——<b>字段留了，但没有三种收益口径的分别计算</b></td></tr>
+<tr><td>36/6/6 向前滚动 6 个月</td><td><span class="pill p-ok">已实现</span></td><td><code>walk_forward_splits(calendar, cfg.research, label_ends=ends)</code></td></tr>
+<tr><td>按实际标签结束时间清除跨边界标签</td><td><span class="pill p-ok">已实现</span></td><td><code>research.py:39-43 purge_labels()</code>，按 <code>label_end &lt; boundary</code> 严格判定，不是固定删行数</td></tr>
+<tr><td>每代最多 12 个预登记配置；同配置跨时间窗不重复计数</td><td><span class="pill p-ok">已实现</span></td><td><code>ExperimentRegistry.register()</code> 的身份不含 <code>split</code>，split 单记 <code>folds</code> 表；<code>pipeline.py:63</code> 做预算检查</td></tr>
+<tr><td>价量模块、拥挤惩罚、交易缓冲、频率、期限、ETF、风控档位<b>分别设置对照</b></td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:20,128-146</code>：7 项消融 <code>without_opportunity / without_crowding / without_buffer / monthly / horizon21 / without_etfs / legacy_risk</code></td></tr>
+<tr><td>参数选择仅看训练与验证；测试结果不重新择优</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:95</code> 在 <code>validation</code> 上选 best，<code>:97</code> 在 <code>train+validation</code> 上重拟合，再预测 <code>test</code></td></tr>
+<tr><td>主指标为扣费后日超额收益均值的年化值</td><td><span class="pill p-ok">已实现</span></td><td><code>primary_metric='annualized_mean_daily_net_excess'</code></td></tr>
+<tr><td>20 日时间分块置信区间，60 日分块敏感性</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:147-148</code> <code>ci20</code> / <code>ci60</code></td></tr>
+<tr><td>压力：费用翻倍、流动性下降、连续无法卖出、停牌、报价缺失、跳空、相关性升高、执行延迟</td><td><span class="pill p-ok">已实现</span></td><td><code>pipeline.py:161-193</code>：9 个场景，含 <code>adverse_five_sessions_locked</code> 并标注 <code>retrospective_scenario=True</code></td></tr>
+<tr><td>五日锁仓同时覆盖固定场景和持仓最不利历史区间，后者明确是事后压力</td><td><span class="pill p-ok">已实现</span></td><td>固定 <code>cal[20:25]</code> + 事后 <code>adverse</code>（滚动 5 日最差起点），且显式打标</td></tr>
+<tr><td>资金守恒和成交约束必须始终成立</td><td><span class="pill p-ok">已实现</span></td><td><code>constraints_passed=all(a['cash']&gt;=0 and all(q&gt;=0 ...))</code></td></tr>
+<tr><td>研究证据不足时保持「未证明有效」</td><td><span class="pill p-ok">已实现</span></td><td>恒 <code>promotion_approved=False</code>，<code>status='unproven'</code></td></tr>
+</tbody>
+</table>
+
+<div class="box good">
+<p><b>顺便说一处他做得比我建议的更好。</b><code>pipeline.py:124</code>：</p>
+<pre>if i+1==protocol['preflight_trials'] and not healthy:break</pre>
+<p>20 次预检<b>只在「机制不健康」时提前退出，不按收益方向筛选</b>。<code>healthy</code> 的判据是 <code>usable(run)</code>，即 <code>status=='research_unvalidated'</code> 且 <code>run_health.research_interpretable</code>（无配权失败、无数据问题）。<b>这正是他在 <code>REVIEW_RESPONSE_V3</code> 里反驳我时的论点，而且他把它实现对了。</b></p>
+</div>
+
+<h2>三、方案真正强的地方</h2>
+
+<p>这些不是客套。每一条我都对着代码或文档确认过。</p>
+
+<ol>
+<li><b>把数据（P1）定为关键路径。</b>整份文档最重要的判断，且是对的。所有其他问题都是它的下游。方案说「数据获取期间可并行开发模型行为测试，绩效结论等待数据验收」——这是正确的资源分配。</li>
+<li><b>「不把 ETF 样本的成功当成股票选股证据」。</b>对，且很容易搞错。ETF 有穿透、有做市商、没有涨跌停一样的微观结构。</li>
+<li><b>「保留退市、ST、停牌、行业变更和公司行动记录，不能因缺数据而事后删除表现差的证券」。</b>幸存者偏差说到了点子上。</li>
+<li><b>「区分事件发生时间、历史可知时间、当前抓取时间和数据修订时间；不得用当前抓取时间伪造历史披露时间」。</b>这是整个项目最深的问题。方案不仅抓到了，还把它变成了可检查的要求（<code>available_at</code> / <code>effective_at</code> / <code>revision</code> 三字段）。</li>
+<li><b>「供应商声明『完整』必须有可检查的覆盖依据」。</b>与 <code>DATA_PROVIDERS_2026-09-24.md</code> 一致，那份文档写得很诚实——「未使用账号、未采购、未联系供应商」「没有取得授权报价，费用记为『待核验』，不编造报价」。<b>这种自觉比技术细节更难得。</b></li>
+<li><b>「随机对照……不用全样本已实现波动事后调平」。</b>微妙且正确。</li>
+<li><b>「此前 200 次实验……不能证明整个池子没有 Alpha，也不能替代新数据上的实验」。</b>他吸收了我在 R2 里的自我更正。</li>
+<li><b>「首代不加入 LightGBM。后续需要独立登记，并在同一条件下证明增量」。</b>对的纪律。代码里确实只有 Ridge。</li>
+<li><b>「市场波动或卖出受阻可能导致实际暴露超限。此时报告超限、禁止增加相关风险并保留退出订单，不能在账面上假装已降仓」。</b>这就是反静默降级原则，被写成了需求。极好。</li>
+<li><b>「行业样本不足或历史行业身份缺失时，不以当前行业补齐；相应预测返回无效原因」。</b>代码确实这么做（<code>opportunity.py:39</code> 把 <code>'UNKNOWN'/'NA'/''</code> 映射为 NaN，<code>min_industry_members=5</code> 不足即跳过）。</li>
+</ol>
+
+<h2>四、方案的技术缺陷（我的批评）</h2>
+
+<h3>4.1 「行业扩散」特征组在横截面上没有分辨力</h3>
+
+<p><code>opportunity_features</code> 里，<code>breadth</code> 和 <code>strength</code> 是按行业算出的<b>标量</b>，然后广播给该行业全体成员：</p>
+
+<pre>breadth.loc[d,ready]=(close.loc[d,ready]&gt;ma.loc[d,ready]).mean()      # 行业级标量
+strength.loc[d,ready]=(rel20.loc[d,ready]&gt;0).mean()                  # 行业级标量</pre>
+
+<p>10 个特征里有 4 个（<code>breadth60 / strength20 / breadth_change / strength_change</code>）在给定交易日内对同行业所有股票取值<b>完全相同</b>。一个横截面排序模型从这 4 个特征拿不到任何行业内分辨力，只能得到行业级倾斜。</p>
+
+<p>再叠加 25% 行业上限：模型押的行业倾斜会被配权器系统性地截断——<b>模型想加重仓的行业，恰恰是配权器不让加的那个</b>。</p>
+
+<div class="box hot">
+<p><b>方案说「残差趋势、行业扩散、上涨质量一起验证，暂不宣称是三个独立收益来源」——这不够。</b>应该更进一步：<b>行业扩散在构造上就不可能成为横截面选股来源</b>，它是择时/倾斜的覆盖层。这个判断应该在设计阶段做出，而不是等结果出来后解释「为什么第三个来源没有增量」。</p>
+<p><b>两条出路：</b>(a) 对打分做行业中性化，让行业扩散只影响行业内排序的基准；(b) 把行业扩散组从横截面模型移出，作为独立覆盖层显式建模。二选一，写进方案。</p>
+</div>
+
+<h3>4.2 没有行业中性化</h3>
+
+<p>方案引入行业扩散特征，却没有行业中性打分。6% 单股上限 + 25% 行业上限意味着配权器必须跨行业摊开，因此行业级信号会被截断。这与 4.1 是同一个问题的两面：<b>要么中性化，要么移出。</b></p>
+
+<h3>4.3 <code>forward_labels</code> 对公司行动 fail-open</h3>
+
+<pre>if action.get('action_type','distribution')!='distribution': bad=True;break</pre>
+
+<p><code>action_type</code> 缺失时默认当作 <code>'distribution'</code>（现金/送股），而不是标记异常。这与仓库自己的 fail-closed 原则冲突——<code>evidence.py</code> 缺失即失败、<code>crowding.py</code> 缺失即归未知风险组、<code>allocation.py</code> 缺失行业即具名拒绝。</p>
+
+<p>方案写「无法正确处理的事件明确阻断相关绩效」——<b>代码对「字段缺失」这一类没有做到</b>。一行改动，但它正是方案想消灭的那类缺陷。</p>
+
+<h3>4.4 P2 的 1000 次随机对照，现在一次都跑不了</h3>
+
+<p><code>pipeline.run_suite</code> 的第一道门是：</p>
+
+<pre>assessment=qualification(ds)
+if assessment['status']!='qualified_for_daily_research' and not fixture:
+    result=blocked_result(assessment['reasons']); ... ; return assessment</pre>
+
+<p>而 <code>qualification()</code> 会因为 <code>historical_industry_incomplete</code>、<code>coverage_evidence_missing:*</code>（6 个字段各需 <code>source_url</code> + <code>verification_artifact</code> + <code>sha256</code>）、<code>historical_universe_required</code> 等理由返回 <code>blocked_data</code>。</p>
+
+<div class="box hot">
+<p><b>方案把 P2 写成独立阶段，但 P2 100% 依赖 P1。</b>在 P1 的真实数据落地前，P2 的执行次数是 0——不是「跑得慢」，是「第一行就返回」。</p>
+<p>这个依赖关系必须写明，否则会让人误以为 P2 可以并行推进，进而把「P2 未完成」误判为工程进度问题，而它实际是数据问题。</p>
+</div>
+
+<h3>4.5 折级「净超额」不是独立观测</h3>
+
+<p><code>pipeline.py:106,126</code>：</p>
+
+<pre>observed=engine.run(ds,strategy='opportunity',forecasts=all_forecasts,
+                    start=folds[0]['test'][0],end=folds[-1]['test'][-1],prepared=prepared)
+...
+incremental=[float(paired.loc[f['test'][0]:f['test'][-1]].mean()*252) for f in folds]</pre>
+
+<p>折级超额是从<b>一次连续运行</b>的净值序列上按日历切片得到的。日历上折不重叠，但<b>持仓跨折延续</b>，所以折级收益不是独立观测。</p>
+
+<p>后果：<code>evidence.py</code> 里「≥3 个不重叠测试段、≥2/3 折扣费增量为正」这条判据，用在这里比它看起来要弱。三个折的符号相关性会显著高于独立情形。</p>
+
+<p><b>两条出路：</b>(a) 每折独立起账（更保守，但更接近「三次独立实验」的语义）；(b) 保留连续账户，但在文档里明确写明这是「同一账户的连续切片」，并相应降低该判据的权重、把权重移到 <code>ci20</code>/<code>ci60</code> 上。</p>
+
+<h3>4.6 缺程序级停止规则 —— 这是最需要补的一条</h3>
+
+<p>方案有「每代最多 12 个预登记配置」，但没有「什么时候放弃这条研究路线」。</p>
+
+<p>而且 <code>ExperimentRegistry</code> 的预算上限比它看起来弱得多。<code>pipeline.py:51-52</code>：</p>
+
+<pre>identity=fingerprint(dict(protocol=protocol,data=ds.version,config=asdict(cfg),code=provenance()["code_sha256"]))
+out=root/identity[:20]; ... registry=ExperimentRegistry(out/'registry',cfg.research)</pre>
+
+<div class="box hot">
+<p><b>每个 <code>identity</code> 建一个新注册表。</b>而 <code>identity</code> 包含 <code>data_version</code>、<code>protocol</code>、<code>config</code> 和 <b><code>code_sha256</code></b>。</p>
+<p>意思是：<b>换数据版本、改协议、调一个参数、甚至改一行代码，都会生成新注册表，试验预算重置为 12。</b></p>
+<p>所以「每代最多 12 个配置」约束的是<b>同一协议下的候选数</b>，不是<b>研究者累计尝试过多少假设</b>。这不是漏洞，但它不是方案以为的那个保护。在 <code>code_sha256</code> 每天都在变的这个仓库里，实际约束接近于零。</p>
+<p><b>要补的：</b>一条跨注册表的累计预算（例如按 <code>data_version</code> 聚合，或单独维护一个全局试验账本），以及一条明确的程序级停止规则——<b>「若第 N 代未过门禁，停止该路线并写出否定结论」</b>。没有后者，方案是一个在无限时间跨度上生成多重比较的机制。</p>
+</div>
+
+<h3>4.7 流程：P0「冻结基线」与「继续写代码」互斥</h3>
+
+<p>方案 P0 要冻结基线，P1 又说「数据获取期间可并行开发模型行为测试」。这在逻辑上没问题，但方案漏掉了<b>真正的故障源</b>。</p>
+
+<p>回顾今天：<code>1984edf</code> 提交于 15:54:56，此后 15 分钟内又写了 12 个文件，<b>作者的实现记录 <code>docs/IMPLEMENTATION_2026-09-24.md</code> 停在 15:34，一个字没更新</b>。我在上一轮报告里指出的就是这件事。</p>
+
+<div class="box hot">
+<p>方案是一份 5 章、约 40 个行动项的文档。如果不配一条硬规则，它只会放大这个节奏问题：</p>
+<p><b>一个逻辑单元 = 一次提交 + 一次文档更新。</b>不是「阶段结束再提交」，也不是「有空再补文档」。<code>REVIEW_RESPONSE_V3_2026-09-24.md</code> 写得很好——说明他有这个能力，只是没把它变成约束。</p>
+</div>
+
+<h2>五、我自己的错误更正</h2>
+
+<div class="box me">
+<p>方案附带的 <code>docs/REVIEW_RESPONSE_V3_2026-09-24.md</code> 纠正了我三处，<b>三处都是他对</b>。我用 15:17 的冻结快照逐条验证过。</p>
+</div>
+
+<h3>5.1 拥挤过滤方向 —— 我读反了不等号</h3>
+
+<p>我在 R1 报告里写：该过滤「只保留最不拥挤 5%」。<b>错。</b></p>
+
+<p>用 15:17 冻结副本（<code>/tmp/snap_1517</code>）核对：</p>
+
+<pre>config.py:86    crowding_quantile: float = 0.95   # 拥挤剔除线(&gt;95%分位剔除)   ← 值从未变过
+experts.py      keep = c_row.rank(pct=True) &gt; (1 - CONFIG.factors.crowding_quantile)
+                     = rank(pct=True) &gt; 0.05                              ← 剔除排名最低的 5%
+experts.py:48   "factor_price_crowding": "交易拥挤度低(未被过度炒作)"        ← 因子值高 = 拥挤度低</pre>
+
+<p>因子值高 = 拥挤度低，所以「排名最低的 5%」= <b>最拥挤的 5%</b>，过滤方向正确。<b>我把不等号读反了，而且值从来没改过——不是「他改了我才发现」，是我一开始就错了。</b></p>
+
+<h3>5.2 「先跑 20 次」的建议 —— 他拒绝得对</h3>
+
+<p>我在 R1 里建议「应先跑 20 次」。他的反驳：</p>
+
+<blockquote style="border-left:3px solid var(--line);padding-left:14px;color:var(--tx2)">
+「根据初期收益显著性决定是否继续会产生选择偏差。20 次只检查运行质量，不能按结果方向筛选。」
+</blockquote>
+
+<p><b>成立。</b>我的本意是「检查仪器是否正常」，但表述成「按初期收益决定是否继续」就是结果依赖的停止规则。<code>pipeline.py:124</code> 的实现方式（只在机制不健康时退出）才是对的。</p>
+
+<h3>5.3 R3 的「防护只在配权器」—— 我漏了一层</h3>
+
+<p>我上一轮写「<code>contracts.validate()</code> 只查 <code>.isna()</code>，哨兵串 <code>'UNKNOWN'</code> 照样通过，防护只在配权器里」。<b>前半句仍然成立，后半句不准确。</b></p>
+
+<p><code>data/qualification.py:16</code>：</p>
+
+<pre>missing_sectors = ds.instruments.sector.isna() | ds.instruments.sector.isin(['UNKNOWN','NA',''])
+if require_industry and missing_sectors.any(): reasons.append('historical_industry_incomplete')</pre>
+
+<p><code>qualification()</code> <b>显式检查了哨兵值</b>，而它是 <code>pipeline.run_suite</code> 的第一道门。所以哨兵在研究入口是被拦住的——防护有两层，我说「只有一层」是错的。正确的说法是：<b><code>validate()</code> 这一层放行，<code>qualification()</code> 这一层拦住，而 <code>allocation()</code> 是第三层兜底。</b></p>
+
+<h2>六、我的建议</h2>
+
+<ol>
+<li><b>先改第一章的「现状裁定」，再谈执行。</b>5 条 P0 里 4 条已实现、1 条事实错误、1 条与自己的附件矛盾。一份「现状」写错的方案，执行时会把已经做完的事再做一遍，同时漏掉真正的阻塞。</li>
+<li><b>把 P1 明确写成 P2 的前置条件。</b>现在 P2 是 0 次可运行。写成「P1 完成前 P2 不启动」比写成「可并行」更诚实。</li>
+<li><b>决定行业扩散组的归属。</b>要么中性化，要么移出横截面模型。这是设计决策，不该留到结果阶段解释。</li>
+<li><b>补 4.3 那个 fail-open 的一行。</b><code>action_type</code> 缺失应当阻断，不应默认为 distribution。</li>
+<li><b>补跨注册表的累计试验预算 + 程序级停止规则。</b>这是方案里唯一一个会导致「看起来有纪律、实际没有」的结构性缺口。</li>
+<li><b>把「一个逻辑单元 = 一次提交 + 一次文档更新」写成硬规则。</b>技术判断他已经够好，问题从来不在判断力，在节奏。</li>
+</ol>
+
+<div class="box good">
+<p><b>最后。</b>这份方案的技术判断力，比我在这个仓库里见过的任何一份文档都高。<code>evidence.py</code> 拒绝裸布尔、<code>ExperimentRegistry</code> 按配置而非按折计数、<code>preflight</code> 只看机制不看收益、<code>stress_suite</code> 区分「固定场景」与「事后最不利区间」——这些都是真懂统计和回测陷阱的人才会做的选择。</p>
+<p>而且他在 <code>REVIEW_RESPONSE_V3</code> 里<b>抓到了我三处错误，三处都对</b>。一个会核对、会拒绝、会指出审查者错误的对话者，比一个照单全收的对话者有价值得多。</p>
+<p><b>所以我的结论是：方案可以执行，但执行前必须先做一件事——把第一章重写一遍。</b>它的方向对、参数对、判断对，唯独「现在到哪了」说错了。而在一个 15 分钟写 12 个文件的仓库里，「现在到哪了」恰恰是最容易说错、也最不能错的一句。</p>
+</div>
+
+<div class="foot">
+本评估为只读核查：未修改仓库内任何源码。所有测量在冻结副本（<code>/tmp/snap_1517</code>、<code>/tmp/audit2</code>）或只读调用上进行。<br>
+关联报告：<code>docs/IMPLEMENTATION_REVIEW_R3_2026-09-24.html</code>　·　<code>docs/IMPLEMENTATION_REVIEW_R2_2026-09-24.html</code>　·　<code>docs/IMPLEMENTATION_REVIEW_2026-09-24.html</code>
+</div>
+
+</div>
+</body>
+</html>

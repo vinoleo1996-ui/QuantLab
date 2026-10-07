@@ -1,7 +1,6 @@
 """回测报告生成：单文件、自包含、file:// 可直接打开。
 
-与 webapp 看板共用同一套设计令牌与涨跌配色（红涨绿跌），避免两处页面
-读起来像两个产品。图表用内联 canvas 渲染而非外链库：报告要被归档、拷贝、
+采用独立的报告设计令牌与涨跌配色（红涨绿跌）。图表用内联 canvas 渲染而非外链库：报告要被归档、拷贝、
 双击打开，不能假设机器上有 node_modules 或能联网。
 
 数据以 JSON 内嵌（DATA 占位符），渲染逻辑全部内联——这样打开报告不需要
@@ -19,8 +18,8 @@ import pandas as pd
 from quantlab.config import OUTPUT_DIR
 from quantlab.report.metrics import ic_icir_summary, performance_table
 
-# Shared with quantlab/webapp/static/dashboard.css. Duplicated on purpose: the
-# report must render standalone, so it cannot link the dashboard stylesheet.
+# These report tokens intentionally remain self-contained: an archived report
+# must never depend on the local web application's stylesheet.
 TOKENS = """
 :root{
   --bg-base:#0a0d14;--bg-surface:#121826;--bg-card:#182032;--bg-card-hover:#1e2840;

@@ -8,6 +8,25 @@
 
 付费购买也不能直接通过qualification。抽样对账验证字段含义与数值；完整覆盖还须核对证券范围、时间区间、分页、缺行和公司行动。多个接口若复用同一底层源，不构成独立交叉验证。
 
+## 免费优先落地：CNEquity + a-stock-data 实核（2026-09-24 补充）
+
+针对“哪些免费项目能免费用起来”，本轮实核两个活跃项目（README/数据集目录/端点清单级核验，未整包运行；接口可用性以 C0 探针为准）：
+
+| 项目 | 协议/许可 | 能直接填哪张契约表 | 核验边界 |
+|---|---|---|---|
+| [CNEquity](https://github.com/rootSunc/CNEquity)（PyPI `cnequity`，2026 活跃） | Apache-2.0，免注册免 token，自托管 Parquet 湖 | `instruments`(证券主数据)、`trading_calendar`、`trading_status`(停复牌/ST)、`daily_bars`(全市场日线)、`index_bars`、`adj_factors`(复权因子)、`corporate_actions`(公司行为)、`delisting_events`、`index_constituents`(历史成分，回填 cni)、`industry_members`(行业成分，回填 sw)、`valuation_metrics`；行级 `source/data_version/fetched_at` 溯源；**保留退市股**（自身演示：用今日名单回看 2016-2021 等权收益 5.9%→12.0%，与本仓发现的幸存者偏差一致） | 全市场日线默认 2016 起（`--profile full` 约 3h，可 `backfill daily_bars --start 2001`）；历史 ST 需一次 10-11h 回填；退市股复权/历史成分 as-of 语义须实测；主源 TDX，海外出口可能需代理 |
+| [a-stock-data](https://github.com/simonlin1212/a-stock-data)（V3.10.0 2026-09-22，87 端点/34 源，零鉴权） | Apache-2.0 | §1.2 腾讯日K(前后复权)、§1.3 通达信盘后包(当日全市场日线含成交额)、§1.6 新浪复权因子、§6.5 估值历史(2016+，含换手/停牌/ST，**可当市值池免费替代**)、§6.6 上市/退市日(唯一零鉴权退市日源)、§6.7 申万行业变迁史(仅代码)、§6.8 ST名单 | §12 指数成分只给最近快照，**明确无历史时点回填**，不能用于成分池；mootdx 行情命令 2026-09 起失效(#52)，K线已改腾讯/盘后包；估值历史不支持北交所 |
+| BaoStock（现役 `collect_free_research.py` 底座） | 免注册 | 原始日线/日历/分红/isST/停牌/上市退市日期；2014-01-02 历史名单 2970 条含 98 只后来退市证券 | 退市行情需权限审核（实测 10002007/Broken pipe），不能作唯一后端 |
+
+**结论修正（相对早前“4 项硬缺口”）：**
+- 历史指数成分：**部分推翻**——CNEquity `index_constituents` 回填 cni 声称提供 2016+ 历史成分，待实测 as-of 语义；若通过则成分池可开。
+- 历史市值：a-stock-data §6.5 免费替代 Tushare `daily_basic`（2016+）；退市覆盖待核，市值池在核验后开，上市资格+成交额池不依赖它。
+- 开盘状态：`qualification.py:84` 已接受 `open_status='derived'`——规则推导（昨收×涨跌停制度表+open 价）合法，不是用成交额反推。
+- 披露时间：首代机会模块（残差趋势/行业扩散/上涨质量）不用财报，冻结 fundamentals/announcements 即可，非首代门禁。
+- 真硬缺口收窄为：**退市股复权/公司行动完整性**。CNEquity 保留退市股但 delisted 复权待实测；若缺口仍在，用不复权价+事件缺失 `data_issue` 标注+末价结算，结果标 `research_unvalidated`，不宣 qualified。
+
+**落地顺序（并入 OPTIMIZATION_PLAN 阶段 C）：** C0 探针(demo 25s) → C1 `cne init --profile full`+backfill(2014 起+历史ST 过夜) → C2 a-stock-data 独立对拍（腾讯K线/盘后包/§6.6/§6.7/§6.5）→ C3 按 `import_research_dataset.py` 产规范化目录两池 → C4 溯源对齐 → C5 基准 → C6 open_status=derived。Tushare ~500 元仅在免费多源无法消歧时作抽样对账备选。
+
 ## 实际取得的证据
 
 | 数据 | 实际结果 | 能证明什么 / 不能证明什么 |
@@ -63,9 +82,9 @@
 
 ## 下一步执行顺序
 
-- 先建立沪深证券生命周期并集：历史列表、官方退市、上市/代码变更互核，逐字段区分当前名称和历史状态。
-- 对该范围抓原始价、日级ST/停牌、公司行动；困难样本包括退市/合并、长期停牌、送转、分红税档及上市初期，不能只验证存续蓝筹。
-- 验证行业变迁的生效与公布语义；官方免费文件不通或历史修订不清时，用同一困难样本评估付费来源。
-- 先证明一份最小真实数据包可以正确记账，再扩全历史池和一次冻结研究。无需引入新交易框架、代理或其他模型。
+- 先建立沪深证券生命周期并集：历史列表、官方退市、上市/代码变更互核，逐字段区分当前名称和历史状态。落点：CNEquity `instruments`+`delisting_events` × a-stock-data §6.6 × `historical_securities_20140102.csv`。
+- 对该范围抓原始价、日级ST/停牌、公司行动；困难样本包括退市/合并、长期停牌、送转、分红税档及上市初期，不能只验证存续蓝筹。落点：CNEquity `daily_bars`/`trading_status`/`corporate_actions`，a-stock-data §1.2/§1.3/§6.5/§6.7 对拍。
+- 验证行业变迁的生效与公布语义；官方免费文件不通或历史修订不清时，用同一困难样本评估付费来源。落点：a-stock-data §6.7 + CNEquity `industry_members` 回填 sw。
+- 先证明一份最小真实数据包可以正确记账，再扩全历史池和一次冻结研究。无需引入新交易框架、代理或其他模型。落点：`scripts/import_research_dataset.py` → `audit_manifest`。
 
 本轮仅推进P1字段核验与真实样本。正式机会策略、全量1000次随机对照、真实OOS和六个月冻结前向证据仍未取得；任何来源均不保证策略收益。

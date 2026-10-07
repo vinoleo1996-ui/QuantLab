@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>两道审计技能对 QuantLab 的实测 —— 2026-09-25</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2128;--line:#30363d;--fg:#e6edf3;--dim:#8b949e;
+--red:#f85149;--green:#3fb950;--amber:#d29922;--blue:#58a6ff;--purple:#bc8cff}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 28px 80px;background:var(--bg);color:var(--fg);
+font:15px/1.72 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+max-width:1080px;margin-inline:auto}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:.2px}
+h2{font-size:20px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:16px;margin:26px 0 10px;color:var(--blue)}
+h4{font-size:14px;margin:18px 0 8px;color:var(--purple)}
+.sub{color:var(--dim);font-size:13.5px;margin-bottom:22px}
+.meta{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;
+font-size:13.5px;color:var(--dim);margin:18px 0}
+.meta b{color:var(--fg);font-weight:600}
+.meta code{color:var(--blue)}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:right}
+th{background:var(--panel2);color:var(--dim);font-weight:600;text-align:center}
+td:first-child,th:first-child{text-align:left}
+tbody tr:nth-child(even){background:#12171e}
+code{background:#1f2630;padding:1.5px 5px;border-radius:4px;font-size:12.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#a5d6ff}
+pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+overflow-x:auto;font-size:12.5px;line-height:1.6;font-family:ui-monospace,Menlo,monospace}
+.verdict{background:var(--panel);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;
+padding:14px 18px;margin:16px 0}
+.verdict.bad{border-left-color:var(--red)}
+.verdict.warn{border-left-color:var(--amber)}
+.verdict.good{border-left-color:var(--green)}
+.verdict p{margin:6px 0}
+.verdict .t{font-weight:700;font-size:14px;margin-bottom:8px}
+.red{color:var(--red)}.green{color:var(--green)}.amber{color:var(--amber)}
+.blue{color:var(--blue)}.dim{color:var(--dim)}.purple{color:var(--purple)}
+ul,ol{padding-left:22px}li{margin:5px 0}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;
+border:1px solid var(--line);color:var(--dim);margin-right:6px}
+.pill.no{border-color:#5d1c1a;color:var(--red);background:#2b1210}
+.pill.yes{border-color:#1c4a25;color:var(--green);background:#0d2413}
+.pill.mid{border-color:#5a4410;color:var(--amber);background:#2a2008}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card .k{font-size:12px;color:var(--dim);margin-bottom:6px}
+.card .v{font-size:22px;font-weight:700;letter-spacing:-.4px}
+.card .n{font-size:12px;color:var(--dim);margin-top:5px}
+</style>
+</head>
+<body>
+
+<h1>两道审计技能对 QuantLab 的实测</h1>
+<div class="sub">把 <code>backtest-return-provenance</code> 的四道前置检查与
+<code>factor-composite-unit-audit</code> 的块量纲审计，逐条跑在仓库现有数据上。</div>
+
+<div class="meta">
+<b>审计快照</b>　源码 <code>cc0c7b5</code> + 工作树未提交改动（<code>quantlab/**/*.py</code> 合并哈希
+<code>cd2b1b667edd507261384f0af379d63a23df2802f005385e8cebc81126324776</code>）<br>
+<b>审计范围</b>　只读。未修改 <code>quantlab/</code> 下任何文件。<br>
+<b>数据</b>　<code>data/local_market/fa3fd23e8e6824fb619bda46/panels</code>（6011 只 / 11,897,564 行）、
+<code>data/free_research_120/dataset</code>（120 只 / 3096 日）<br>
+<b>产物</b>　<code>output/audit_20260925/</code>（4 个脚本 + 7 个 JSON/CSV）
+</div>
+
+<h2>一句话结论</h2>
+<div class="verdict bad">
+<p class="t">两道审计各有一个「真」结论、一个「假」结论，且都推翻了直觉。</p>
+<p><b>第 2 道命中</b>：仓库复权因子列里存在 <span class="red">937.83 倍</span>的坏行，
+标的、日期、坏值都与技能文档记录的样例一致。但按被污染系统自己的筛选口径求交集后，
+它落在研究池外、ADV 只有 74 万 —— 潜在伤害 ≠ 实际伤害。</p>
+<p><b>因子块审计落空</b>：技能要找的「不同量纲相加导致块内只有一个因子在起作用」
+<b>在本仓库不存在</b> —— 11 个因子的中位绝对量级全部等于 <code>1/1.4826</code>，
+引擎在源头就归一化了。但顺手量出了另外三个更值钱的病。</p>
+</div>
+
+<h2>三方核验与修正（01:34 追加）</h2>
+
+<p>收到独立复算反馈，逐条核过。<b>三处措辞需要修正，其中一处是实质性错误。</b>
+核验脚本 <code>output/audit_20260925/verify_feedback.py</code>，
+结果 <code>feedback_verification.json</code> / <code>data_gaps_coverage.csv</code>。</p>
+
+<table>
+<thead><tr><th>反馈条目</th><th>裁定</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>0.6744907 是数学必然，不是额外发现</td>
+<td><span class="pill yes">成立</span></td>
+<td>结论对，但机制说错了 —— 见下</td></tr>
+<tr><td><code>decision.py</code> 忽略了 <code>data_gaps</code> 兜底</td>
+<td><span class="pill mid">一半成立</span></td>
+<td>机制确实存在（我漏了）；<b>但它对 8 个坏点一个都没盖住</b></td></tr>
+<tr><td>「逐位一致」名不副实</td>
+<td><span class="pill yes">成立</span></td>
+<td>坏值逐位一致，跳变前值第 5 位有效数字起不同</td></tr>
+</tbody></table>
+
+<h3>修正 1：<code>0.674490749835968</code> —— 反馈结论对，机制错</h3>
+
+<p>反馈说它是 <code>Φ⁻¹(0.75) = 0.6744897</code> 在 n=109 下的有限样本取值，
+「波动量级约 0.096」。<b>前半对，后半错。</b>实测：</p>
+
+<pre>1 / 1.4826              = 0.6744907594765952
+float32 化后转 float64   = 0.674490749835968     ← 与仓库实测值逐位相同
+仓库实测（11 个因子）     = 0.674490749835968
+
+用三种完全不同的输入分布重跑同一恒等式：
+  uniform(0,1)           → 0.6744907594765952
+  lognormal(0,3)         → 0.6744907594765952
+  normal(1e6, 1e-3)      → 0.6744907594765952     ← 三次逐位相同</pre>
+
+<p><code>winsorize_zscore</code> 里 <code>mad = median|x−med| × 1.4826</code>，
+所以 <code>median|z| = median|x−med| / mad = 1/1.4826</code> ——
+<b>对任意输入恒成立的构造性恒等式，没有任何抽样波动。</b>
+反馈估的「波动 0.096」不存在；那 9.6e-9 的零头来自
+<code>FactorEngine.compute</code> 末尾的 <code>astype("float32")</code>（float32 约 7 位有效数字）。</p>
+
+<p><b>裁定：反馈的结论（这是数学必然、不是发现）完全正确，我的「额外证据」表述虚高，已删。
+但反馈给出的机制是错的 —— 这里没有有限样本问题，是定义式。恰好因为
+<code>1.4826 ≡ 1/Φ⁻¹(0.75)</code>，两种解释算出同一个数。</b>
+顺带解释了 <code>flow_volume_trend</code> 的 <code>0.6744908094406128</code>：
+正好差 1 个 float32 ulp（5.96e-8），不是「末位不同」这么含糊。</p>
+
+<h3>修正 2：<code>data_gaps</code> —— 我漏了机制，但机制本身是空转的</h3>
+
+<p>反馈指出 <code>decision.py:58-59</code> 有
+<code>if prev &lt; gap_date &lt;= t: y[id] = np.nan</code>，
+且 <code>local_adapter.py:392</code> 把 <code>data_gaps=issues</code> 写进 manifest，
+所以「无条件使用」不准确。<b>机制确实存在，我漏了，这句要改。</b></p>
+
+<p>但实测把 8 个坏点与登记表求了交集，结果是：</p>
+
+<table>
+<thead><tr><th>标的</th><th>违规日</th><th>登记为 gap</th><th>gap.date</th><th>IC 标签被兜底</th><th>因子面板被兜底</th></tr></thead>
+<tbody>
+<tr><td>sh.600225</td><td>2025-02-07</td><td>是</td><td>2025-03-06</td><td class="red">否</td><td class="red">否</td></tr>
+<tr><td>sh.600695</td><td>2022-05-17</td><td>是</td><td>2022-06-14</td><td class="red">否</td><td class="red">否</td></tr>
+<tr><td>sh.600870</td><td>2022-06-02</td><td>是</td><td>2022-06-30</td><td class="green">是</td><td class="red">否</td></tr>
+<tr><td>sz.000613</td><td>2022-06-08</td><td>是</td><td>2022-06-29</td><td class="green">是</td><td class="red">否</td></tr>
+<tr><td>sz.002147</td><td>2022-06-01</td><td>是</td><td>2022-06-23</td><td class="green">是</td><td class="red">否</td></tr>
+<tr><td>sz.002411</td><td>2023-06-19</td><td>是</td><td>2023-07-12</td><td class="red">否</td><td class="red">否</td></tr>
+<tr><td>sz.000004</td><td>2026-06-23</td><td class="red">未登记</td><td>—</td><td class="red">否</td><td class="red">否</td></tr>
+<tr><td>sz.000155</td><td>2017-12-18</td><td class="red">未登记</td><td>—</td><td class="red">否</td><td class="red">否</td></tr>
+<tr><td colspan="4"><b>覆盖数</b></td><td><b>3 / 8</b></td><td><b class="red">0 / 8</b></td></tr>
+</tbody></table>
+
+<div class="verdict bad">
+<p class="t">根因：登记表的锚点是「退市日」，不是「异常日」</p>
+<p><code>local_adapter.py:326</code> 用 <code>outDate</code>（退市日）登记 gap。
+而违规日是<b>退市整理期首日</b>，比退市日早 <b>15–35 个交易日</b>。</p>
+<p><code>decision.py:47-52</code> 对 <code>delisting_settlement_unverified</code>
+从 gap.date <b>向后</b>置 NaN，区间 <code>[退市日, 日历末尾]</code>。
+实测 6 只退市股的面板最后一根 bar <b>全部早于退市日</b>：</p>
+<pre>sh.600225  退市 2025-03-06  面板末bar 2025-02-27   → 交集为空，置 NaN 0 根
+sh.600695  退市 2022-06-14  面板末bar 2022-06-07   → 0
+sh.600870  退市 2022-06-30  面板末bar 2022-06-23   → 0
+sz.000613  退市 2022-06-29  面板末bar 2022-06-28   → 0
+sz.002147  退市 2022-06-23  面板末bar 2022-06-22   → 0
+sz.002411  退市 2023-07-12  面板末bar 2023-07-11   → 0</pre>
+<p><b>结论：这个机制对退市股是结构性空操作 —— 置 NaN 区间与面板的交集永远是空集。</b>
+<code>score()</code> 里第 95-99 行的 <code>unavailable</code> 排除用的是同一个锚点，同样不生效。</p>
+</div>
+
+<div class="verdict warn">
+<p class="t">这比「没有机制」更危险，而且我的原始判断方向是对的、理由错了</p>
+<p>报告里会因此出现一个看起来负责的字段 <code>data_gaps: 11 条</code>，
+而它保护的实际覆盖率是 <b>0/8（因子面板）与 3/8（IC 标签）</b>。</p>
+<p>修正后的准确表述：<b>不是「无条件使用」，而是「有兜底，但兜底的锚点日期选错了，
+导致覆盖率为 0」</b>。修法很具体：登记 <b>首个异常 bar</b>（或停牌后首个交易日），
+而不是退市日。</p>
+</div>
+
+<h3>修正 3：<code>bj.838227</code> —— 「逐位一致」用词不准</h3>
+
+<pre>仓库实测：  0.0490986668 → 46.0463180542    ratio = 937.832
+技能文档：  0.0490969606 → 46.0463180542    ratio = 937.865
+                        ↑ 坏值逐位一致（13 位全同）
+            ↑ 跳变前值第 5 位有效数字起不同，delta = 1.71e-6</pre>
+
+<p><b>反馈对。正确表述</b>：同一标的、同一日期，<b>坏值 <code>factor_after</code> 逐位一致</b>、
+量级一致（937.83× vs 937.87×），但 <code>factor_before</code> 从第 5 位有效数字起不同。</p>
+<p>这个差异本身是有信息的：说明两处取自<b>同一上游数据源的不同快照/修订版</b>，
+损坏来自上游而不是本仓库引入。技能文档不在仓库内，确实无法在仓库侧独立验证 ——
+这一点反馈说得对。</p>
+
+<h2>第 1 道　分辨率检查</h2>
+
+<p>样本能分辨多小的差距？用同一持有期、全池个股收益的截面标准差除以 √n。</p>
+
+<div class="grid">
+<div class="card"><div class="k">截面标准差（月度，120 只池）</div><div class="v">12.89%</div>
+<div class="n">2020-01 … 2026-06，78 个月</div></div>
+<div class="card"><div class="k">单月组合均值的标准误</div><div class="v">2.88%</div>
+<div class="n">n = 20 只持仓 → 12.89 / √20</div></div>
+<div class="card"><div class="k">年化收益中「选样噪声」的 SE</div><div class="v">3.92pp</div>
+<div class="n">独立月假设，78 个月</div></div>
+</div>
+
+<table>
+<thead><tr><th>对照（qlab_b 预登记实验）</th><th>三臂年化极差</th><th>÷ 3.92pp</th><th>判读</th></tr></thead>
+<tbody>
+<tr><td>enforced 档</td><td>2.60pp</td><td><b class="red">0.66</b></td><td><span class="pill no">不可分辨</span></td></tr>
+<tr><td>omit_for_diagnostic 档</td><td>6.23pp</td><td><b class="amber">1.59</b></td><td><span class="pill mid">可疑，需重抽</span></td></tr>
+</tbody></table>
+
+<div class="verdict warn">
+<p class="t">两个仪器灵敏度差一个量级，必须分开报</p>
+<p>年化口径上，enforced 档三臂差 2.60pp <b>小于</b>纯选样噪声的 1 个标准误 —— 用截面排序
+去比「谁更好」在这个样本上是噪声。</p>
+<p>但 qlab_b 的配对日检验给出 qlab 对月度等权 <b class="red">−2.66%</b>、
+CI20 <code>[−5.09%, −0.14%]</code> 不含 0。它用<b>差分方差</b>，共同因子互相抵消，
+灵敏度远高于截面口径。两者不矛盾，结论是：<b>「显著为负」成立，「A 比 B 好多少」不成立</b>。</p>
+</div>
+
+<h2>第 2 道　收益溯源（用交易所制度区间反查）</h2>
+
+<h3>先说覆盖面：这道检查本身有 94% 的盲区</h3>
+
+<div class="grid">
+<div class="card"><div class="k">可校验 bar 占比</div><div class="v red">5.995%</div>
+<div class="n">713,254 / 11,897,564 行有涨跌停带</div></div>
+<div class="card"><div class="k">北交所可校验行</div><div class="v red">0</div>
+<div class="n">233,419 行全部无带</div></div>
+<div class="card"><div class="k"><code>upper_limit</code> / <code>lower_limit</code></div><div class="v red">100% 空</div>
+<div class="n">死列，实际只有 limit_up/down</div></div>
+</div>
+
+<p>能校验的只有 <code>limit_up</code>/<code>limit_down</code> 都非空的行，集中在 sh/sz。
+北交所 23 万行一根都验不了。<b>先说清楚这一点，再谈下面 54 条违规 —— 分母只有 6%。</b></p>
+
+<h3>违规 54 行，全部落在 <code>open_status='unknown'</code> 的那一天</h3>
+
+<pre>sz.000670  2022-08-22  ref=2.25   close=13.24   realised=+488.4%   legal=+10.2%   open_status=unknown
+sz.000792  2021-08-10  ref=8.84   close=35.90   realised=+306.1%   legal= +9.9%   open_status=unknown
+sh.600870  2022-06-02  ref=3.55   close=0.37    realised= -89.6%   legal= -9.9%   open_status=unknown
+sz.000622  2025-06-25  ref=1.78   close=0.19    realised= -89.3%   legal=-10.1%   open_status=unknown
+sz.000004  2026-06-23  ref=2.76   close=0.31    realised= -88.8%   legal=-10.1%   open_status=unknown
+sz.002147  2022-06-01  ref=3.14   close=0.39    realised= -87.6%   legal= -9.9%   open_status=unknown</pre>
+
+<p>54 条里 <b>52 条</b>的 <code>open_status</code> 是 <code>unknown</code>，第二天立刻变 <code>derived</code>。
+这不是巧合：<b>这些是停牌重组复牌首日 / 恢复上市首日 / 退市整理期首日</b>
+（000670 盈方微停牌两年后复牌、000792 盐湖股份恢复上市）。</p>
+
+<div class="verdict">
+<p class="t">缺陷不在 <code>close</code>，在 <code>reference_price</code></p>
+<p><code>close</code> 是真的，<code>reference_price</code> 被填成了<b>停牌前收盘价</b>而不是交易所公布的复牌参考价。
+涨跌停带仍是按那个错的 ref 算的（000670：2.25 × 1.10 = 2.48），所以
+<b>「close &gt; upper_limit」这类检查抓不到它</b> —— 正是技能里写的那一点。</p>
+<p>注意这里也有<b>误报</b>：000670 的 +488% 和 000792 的 +306% 是真实复牌首日（不设涨跌幅），
+不是数据损坏。守卫必须区分「不设涨跌幅的交易日」和「坏行」。</p>
+</div>
+
+<h3>真正的坏行在 <code>factor</code> 列，而且命中了技能文档的原样例</h3>
+
+<pre>仓库实测：  0.0490986668 → 46.0463180542    ratio = 937.832
+技能文档：  0.0490969606 → 46.0463180542    ratio = 937.865
+                        ↑ 坏值逐位一致（13 位全同）；跳变前值第 5 位有效数字起不同</pre>
+
+<p class="dim">（上一版写「逐位一致」不准确，已按修正 3 改。）
+关键结论不受影响：<b>同一标的、同一日期、同一个坏值、同一量级</b> ——
+差异只说明两处取自同一上游数据源的不同快照，损坏来自上游。</p>
+
+<table>
+<thead><tr><th>口径</th><th>数值</th></tr></thead>
+<tbody>
+<tr><td>factor 跳变行数 / 涉及标的</td><td>2,944 行 / 2,051 只</td></tr>
+<tr><td>板块分布</td><td>sz 2,443　sh 409　bj 92</td></tr>
+<tr><td>ratio &gt; 10×</td><td><b>5 行</b></td></tr>
+<tr><td>ratio &gt; 100×</td><td><b>1 行</b>（即 bj.838227）</td></tr>
+<tr><td>单日批量</td><td>2023-10-16 <b>52 行</b>（全 bj）；其余 5–6 月的批量是年度分红除权</td></tr>
+<tr><td><b>落在 120 只研究池内</b></td><td><b>57 行 / 42 只</b></td></tr>
+</tbody></table>
+
+<div class="verdict good">
+<p class="t">第 6 条陷阱实测成立：潜在伤害 ≠ 实际伤害</p>
+<p>那个 937× 的 bj.838227，<code>adv60 = 743,960 元</code>，比 500 万筛选线低一个量级，
+<b>而且根本不在 120 只研究池里</b>。</p>
+<p>真正落进研究池的 57 行里，没有一行是数量级损坏（ratio &gt; 10 的 5 行全在北交所）。
+再加上仓库账本用 <code>price_basis: raw</code>（<code>factor</code> 只进「历史复权特征快照」），
+<b>结论：这个缺陷是真的，但它没有污染任何头条数字。</b>不要据此否定既有结论。</p>
+</div>
+
+<h3>真正落进池内的污染：54 条违规里 8 条在 120 只池，影响 346 个 bar</h3>
+
+<table>
+<thead><tr><th>标的</th><th>违规日</th><th>已实现收益</th><th>受影响 bar 数</th></tr></thead>
+<tbody>
+<tr><td>sz.000155</td><td>2017-12-18</td><td>−28.9%</td><td><b>250</b>（满窗口）</td></tr>
+<tr><td>sh.600870</td><td>2022-06-02</td><td>−89.6%</td><td>15（至退市）</td></tr>
+<tr><td>sz.002147</td><td>2022-06-01</td><td>−87.6%</td><td>15</td></tr>
+<tr><td>sh.600695</td><td>2022-05-17</td><td>−69.4%</td><td>15</td></tr>
+<tr><td>sz.000613</td><td>2022-06-08</td><td>−76.5%</td><td>15</td></tr>
+<tr><td>sz.002411</td><td>2023-06-19</td><td>−78.9%</td><td>15</td></tr>
+<tr><td>sh.600225</td><td>2025-02-07</td><td>−75.8%</td><td>15</td></tr>
+<tr><td>sz.000004</td><td>2026-06-23</td><td>−88.8%</td><td>6</td></tr>
+</tbody></table>
+
+<p>7 条集中在 2022-05/06 与退市前夜，影响窗口 15 bar 以内。sz.000155 那条在 2017-12，
+满 250 bar，但污染期结束于 2018 年底，<b>早于主研究窗口 2020-01</b>。</p>
+
+<div class="verdict bad">
+<p class="t">结构性风险：兜底机制存在，但锚点日期选错，覆盖率 0/8</p>
+<pre>y = close.loc[t] / close.loc[prev] - 1                    # decision.py:57
+for gap in data_gaps:                                     # decision.py:58-59 有兜底
+    if prev &lt; gap['date'] &lt;= t: y.loc[gap['instrument_id']] = np.nan</pre>
+<p><b>上一版这里写「完全不过滤 open_status / 无条件使用」，措辞不准确 ——
+<code>data_gaps</code> 兜底确实存在，漏了它。</b>但实测覆盖数是
+<b>因子面板 0/8、IC 标签 3/8</b>（详见上方修正 2），根因是 gap 的锚点用了退市日。</p>
+<p>同理 <code>FactorEngine</code> 的 <code>pct_change(60/100/250)</code> 也没有任何 <code>open_status</code> 过滤，
+因子面板的污染窗口长达 250 个交易日且完全不被兜底覆盖。</p>
+<p>这不是「数据坏了」，是「一个已知有问题的字段，其兜底机制的锚点日期选错了」——
+和第 2 道要防的缺陷同类，只是入口在登记表而不在使用点。</p>
+</div>
+
+<h2>第 3 道　极值归因</h2>
+
+<table>
+<thead><tr><th>年</th><th>n</th><th>均值</th><th>中位</th><th>前 10 名占均值</th><th>第 1 名</th></tr></thead>
+<tbody>
+<tr><td>2020</td><td>3,681</td><td>+15.5%</td><td>+1.1%</td><td>9.0%</td><td>sz.300677 +13.68×</td></tr>
+<tr><td>2021</td><td>4,034</td><td>+22.2%</td><td>+8.7%</td><td>4.9%</td><td>sz.000422 +5.79×</td></tr>
+<tr><td>2022</td><td>4,492</td><td>−13.8%</td><td>−18.9%</td><td>−4.1%</td><td>sz.002868 +3.66×</td></tr>
+<tr><td>2023</td><td>4,939</td><td>+6.3%</td><td>+1.0%</td><td>14.0%</td><td class="amber">bj.831834 +8.30×</td></tr>
+<tr><td>2024</td><td>5,281</td><td>−0.1%</td><td>−5.7%</td><td class="red">−843.7%</td><td>sh.688256 +3.88×</td></tr>
+<tr><td>2025</td><td>5,342</td><td>+41.1%</td><td>+24.8%</td><td>3.8%</td><td>sh.688585 +18.56×</td></tr>
+<tr><td>2026H1</td><td>5,186</td><td>+3.8%</td><td>−15.9%</td><td>28.8%</td><td>sh.688146 +7.30×</td></tr>
+</tbody></table>
+
+<p><b>2024 年前 10 名占均值 −843.7%</b> —— 均值 ≈ 0 且为负，前 10 名全正，
+这个数已经失去意义，该年只能用中位数。<b>2023 年前 10 名里 5 个是北交所</b>，
+指向极值集中。下面单独查了它有没有污染第 4 道的结论。</p>
+
+<h2>第 4 道　宇宙侧：池子本身赚不赚钱</h2>
+
+<p>每年初按前 60 交易日均成交额分五档，等权买入持有一年，零成本、无择时、退市按末价。
+判据：<b>均值 / 中位数 / 上涨比例三个口径同时单调</b>才算真效应。</p>
+
+<table>
+<thead><tr><th>年</th><th>Q1 最不流动</th><th>Q5 最流动</th><th>均值极差</th><th>中位极差</th><th>上涨比例极差</th><th>三口径单调</th></tr></thead>
+<tbody>
+<tr><td>2020</td><td>+11.5%</td><td>+18.0%</td><td>−6.5pp</td><td>+1.2pp</td><td>+2.0pp</td><td><span class="pill no">否</span></td></tr>
+<tr><td>2021</td><td>+29.9%</td><td>+13.2%</td><td class="green">+16.7pp</td><td>+15.3pp</td><td>+26.5pp</td><td><span class="pill yes">是</span></td></tr>
+<tr><td>2022</td><td>−1.3%</td><td>−22.0%</td><td class="green">+20.7pp</td><td>+17.4pp</td><td>+24.6pp</td><td><span class="pill yes">是</span></td></tr>
+<tr><td>2023</td><td>+29.8%</td><td>−11.6%</td><td class="green">+41.5pp</td><td>+36.1pp</td><td>+55.9pp</td><td><span class="pill yes">是</span></td></tr>
+<tr><td>2024</td><td>−4.4%</td><td>+4.8%</td><td class="red">−9.2pp</td><td>−9.5pp</td><td>−17.5pp</td><td><span class="pill no">否（反向）</span></td></tr>
+<tr><td>2025</td><td>+56.8%</td><td>+34.1%</td><td class="green">+22.7pp</td><td>+23.1pp</td><td>+23.4pp</td><td><span class="pill mid">截尾后是</span></td></tr>
+<tr><td>2026H1</td><td>−0.5%</td><td>+15.6%</td><td class="red">−16.1pp</td><td>−4.1pp</td><td>−12.0pp</td><td><span class="pill no">否（反向）</span></td></tr>
+</tbody></table>
+
+<div class="verdict warn">
+<p class="t">效应成立，但只有 4/7 年 —— 不能当成稳定结构</p>
+<p>2021/2022/2023 三年三口径同时单调，极差 16.7 / 20.7 / <b>41.5pp</b>，
+远超第 1 道算出的分辨率极限。<b>但 2024 和 2026H1 明确反向，2020 无序。</b></p>
+<p>截尾（[−95%, +300%]）与剔除北交所后，2023 的极差从 41.5pp 降到 40.3 / 31.7pp，
+中位数极差 36.1 / 32.7pp —— <b>效应不是北交所极值造出来的</b>。
+2023 年 Q1 里北交所只占 11.1%，剔掉后均值仍 +20.2%、中位仍 +16.2%。</p>
+<p>结论措辞要精确：<b>「流动性尾部在 4 个年份里有可测的正向分层，在 2 个年份里反向」</b>，
+不写「小盘/低流动性溢价长期成立」。</p>
+</div>
+
+<h3>18.82% 的段位口径（ADV 第 3001–5000 名）</h3>
+
+<p>技能 §5 明确要求：容量和收益都要按<b>实际交易的那一层</b>重测，不能用全市场 Q5 代替。</p>
+
+<table>
+<thead><tr><th>年</th><th>n</th><th>均值</th><th>中位</th><th>上涨比例</th><th>ADV 中位</th><th>ADV p10 / p90</th><th>深圳占比</th></tr></thead>
+<tbody>
+<tr><td>2020</td><td>662</td><td>+11.3%</td><td>+0.4%</td><td>50.8%</td><td>1,339 万</td><td>788 万 / 1,757 万</td><td>51.5%</td></tr>
+<tr><td>2021</td><td>1,012</td><td>+29.0%</td><td>+14.0%</td><td>73.5%</td><td>2,152 万</td><td>1,021 万 / 3,410 万</td><td>46.1%</td></tr>
+<tr><td>2022</td><td>1,487</td><td class="red">−4.3%</td><td>−9.5%</td><td>35.1%</td><td>3,172 万</td><td>1,386 万 / 5,181 万</td><td>49.6%</td></tr>
+<tr><td>2023</td><td>1,836</td><td>+15.7%</td><td>+11.3%</td><td>69.8%</td><td>3,310 万</td><td>1,421 万 / 5,406 万</td><td>50.7%</td></tr>
+<tr><td>2024</td><td>2,000</td><td class="red">−2.9%</td><td>−8.0%</td><td>35.9%</td><td>3,887 万</td><td>2,317 万 / 5,722 万</td><td>52.4%</td></tr>
+<tr><td>2025</td><td>2,000</td><td>+44.7%</td><td>+30.7%</td><td>88.8%</td><td>8,527 万</td><td>5,005 万 / 1.27 亿</td><td>49.3%</td></tr>
+<tr><td>2026H1</td><td>2,000</td><td class="red">−3.4%</td><td>−16.9%</td><td>25.8%</td><td>7,709 万</td><td>4,259 万 / 1.18 亿</td><td>54.6%</td></tr>
+</tbody></table>
+
+<div class="verdict">
+<p class="t">容量不是瓶颈 —— 但收益也不是「尾部溢价」的全部</p>
+<p>按这个口径重测的 ADV 中位数 3,172 万（2022）→ 8,527 万（2025）。
+20 只等权、1% 参与度 → 单日可容纳约 634 万 / 1,705 万元；
+5% 参与度分 10 日建仓 → 3.17 亿 / 8.53 亿。<b>对小资金容量不构成约束。</b></p>
+<p>但注意：这个段位的收益<b>低于</b>全市场 Q1（2023：+15.7% vs +29.8%；
+2025：+44.7% vs +56.8%）。所以 18.82% 的收益线索坐在「尾部」，但不在最尾部 ——
+而 <code>mechanism_audit</code> 已证明，是段位内<b>代码升序</b>把结果推到了 100% 深圳 000/001/002。
+<b>段位选择解释了一部分，排序规则解释了另一部分，两者不能互相替代。</b></p>
+</div>
+
+<h2>因子块量纲审计</h2>
+
+<h3>技能要找的缺陷不存在 —— 量出来是这样</h3>
+
+<pre>11 个因子的中位绝对量级（最后一个截面，n=109）：
+  momentum_12m1m        0.674490749835968
+  momentum_3m           0.674490749835968
+  momentum_1m_reversal  0.674490749835968
+  momentum_trend        0.674490749835968
+  factor_volatility     0.674490749835968
+  value_breadth         0.674490749835968
+  value_medium          0.674490749835968
+  value_lowtension      0.674490749835968
+  flow_turnover_low     0.674490749835968
+  flow_volume_trend     0.6744908094406128
+  factor_price_crowding 0.674490749835968</pre>
+
+<div class="verdict good">
+<p class="t">负面结论：<code>winsorize_zscore</code> 在源头就归一化了所有原料</p>
+<p><b>先把证据表述说准：</b><code>median|z| ≡ 1/1.4826 = 0.6744907594765952</code>
+是构造性恒等式（见上方修正 1），对任意输入成立，<b>不构成额外发现</b>。
+它唯一的作用是证明「上游已归一化」这一件事，而这一件事用恒等式证明就够了。</p>
+<p><code>FactorEngine</code> 的每个因子出口都过 <code>winsorize_zscore</code>（clip ±4）。
+所以 <code>composite_score</code> 里 <code>score += z * w * penalty</code> 加的是<b>同量纲</b>的东西，
+不存在技能文档里 <code>adv_60d</code>(1.46e8) 与 <code>amihud</code>(1.8e-10) 相差 18 个数量级那种塌陷。</p>
+<p>留一消融也支持这一点：composite 块 11 个因子的 LOO Spearman 全在 0.939–0.990，
+<b>没有一项等于 1.000000</b>，即没有装饰项。</p>
+</div>
+
+<h3>但顺手量出了三个真问题</h3>
+
+<h4>1. <code>adaptive_weight</code> 的「地板」不是地板，且函数非单调</h4>
+
+<pre>icir = 0.25       → w = 0.1
+icir = 0.29       → w = 0.1
+icir = 0.2999     → w = 0.1
+icir = 0.30       → w = 0.1
+icir = 0.3000001  → w = 7.69e-08      ← 崩塌
+icir = 0.3001     → w = 7.69e-05
+icir = 0.31       → w = 0.00769
+icir = 0.35       → w = 0.0385
+icir = 0.50       → w = 0.1538
+icir = 1.60       → w = 1.0
+
+ICIR = 0.29 拿到的权重，是 ICIR = 0.31 的 13.0 倍。</pre>
+
+<p>源码 <code>scoring.py:46</code>：<code>w[w &lt;= 0.0] = 0.1</code>。
+兜底只覆盖「恰好等于 0」，对 <code>(0, 0.1)</code> 区间没有任何处理。
+<code>(s − 0.3) / 1.3</code> 在 s 略高于 0.3 时返回接近 0 的正数，直接当权重用了。</p>
+
+<div class="verdict bad">
+<p class="t">后果：一个名义上「自适应加权」的机制，在阈值附近随机删除因子</p>
+<p>ICIR 0.3000001 的因子权重是 7.7e-8 —— 在 float32 面板里<b>数值上等于被删除</b>，
+而 ICIR 0.2999 的因子拿满 0.1。<b>ICIR 更低的那一个得到 13 倍权重。</b></p>
+<p>实测权重分布：264 个 (因子 × 截面) 样本里，<b>92.0% 落在 ≤ 0.1</b>，
+最大值只有 0.1495，达到上限 1.0 的比例是 <b>0%</b>。
+所谓「ICIR 动态加权」在这个样本上已退化为近似等权加随机噪声。</p>
+</div>
+
+<h4>2. 五个专家块里，四个内部在互相抵消</h4>
+
+<p><code>experts.py:9</code> 的 docstring 写「专家 = 一组<b>同类</b>因子的线性合成」。实测横截面 Spearman：</p>
+
+<table>
+<thead><tr><th>块</th><th>成员数</th><th>平均相关</th><th>负相关对</th><th>最强负对</th></tr></thead>
+<tbody>
+<tr><td>momentum</td><td>4</td><td class="red">−0.081</td><td>3 / 6</td><td class="red">momentum_1m_reversal ↔ momentum_trend = <b>−0.845</b></td></tr>
+<tr><td>value</td><td>3</td><td class="red">−0.204</td><td>2 / 3</td><td class="red">value_medium ↔ value_lowtension = <b>−0.654</b></td></tr>
+<tr><td>flow</td><td>2</td><td class="red">−0.236</td><td>1 / 1</td><td class="red">flow_turnover_low ↔ flow_volume_trend = −0.236</td></tr>
+<tr><td>lowvol_quality</td><td>2</td><td class="green">+0.585</td><td>0 / 1</td><td>—</td></tr>
+<tr><td>composite</td><td>11</td><td>+0.007</td><td>25 / 55</td><td class="red">momentum_12m1m ↔ value_breadth = <b>−0.845</b></td></tr>
+</tbody></table>
+
+<p>留一消融把这个说透了：去掉 <code>momentum_1m_reversal</code>，
+momentum 块的新排序与原排序 Spearman = <b class="red">−0.2063</b>（负值）。
+去掉 <code>flow_turnover_low</code>，flow 块 = <b class="red">0.0786</b>。
+两个成员的中位贡献几乎相等（0.4968 / 0.5032），影响力却完全不对称 ——
+因为它们在互相抵消，块分主要是两者之差。</p>
+
+<div class="verdict warn">
+<p class="t">「动量专家」实际是「动量减反转」，两块信号在做减法</p>
+<p><code>momentum_1m_reversal</code> 的方向定义（<code>engine.py:64</code>）是
+<code>winsorize_zscore(−(close/close.shift(21) − 1))</code> —— 短期反转。
+它和 <code>momentum_trend</code>（站上均线）在同一横截面上 rho = −0.845。
+把两者等权相加，得到的不是「动量 + 反转」的信息叠加，而是<b>互相削减后的残差</b>。</p>
+<p>这不必然是错的（反转确实是独立信号），但它和「一组同类因子」的设计说明不符，
+且让块的解释力比名义上的 4 个因子小得多。</p>
+</div>
+
+<h4>3. 记忆里记的「专家温度已标定」修复，默认配置下不生效</h4>
+
+<pre>CONFIG.factors.expert_weight_policy = 'original'
+
+experts.py:104  smoke[name] = q * (shrink if cfg.expert_weight_policy=='uncertainty' else 1.)
+experts.py:120  tau = (max(std(q), nanmedian(uncertainty), floor) if policy=='uncertainty'
+                       else max(std(q), .015))</pre>
+
+<p>带 <code>uncertainty</code> 的分支（HAC 标准误 + 收缩 + 温度下限）才是被修好的那一版，
+而默认配置走的是 <code>else</code> 分支：<code>tau = max(std(q), 0.015)</code>。
+<b>代码修了，默认路径没切过去。</b></p>
+
+<h2>按量级排序的动作</h2>
+
+<table>
+<thead><tr><th>#</th><th>动作</th><th>依据</th><th>预期量级</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>修 <code>adaptive_weight</code> 的地板与单调性</td>
+<td>ICIR 0.29 权重是 0.31 的 13 倍；92% 权重压在 0.04；上限从未触发</td>
+<td>让「自适应加权」这个名字为真</td></tr>
+<tr><td>2</td><td>把 <code>data_gaps</code> 的锚点从「退市日」改成「首个异常 bar」</td>
+<td>6/8 已登记，但 gap.date 晚于违规日 15–35 个交易日且晚于面板末 bar →
+置 NaN 区间交集为空，实际覆盖 <b>0/8</b>（因子面板）、<b>3/8</b>（IC 标签）</td>
+<td>让已有的兜底机制真正生效；<b>改动小、收益直接</b></td></tr>
+<tr><td>3</td><td>补 <code>limit_up/down</code> 覆盖率（当前 6.0%，北交所 0）</td>
+<td>第 2 道检查本身有 94% 盲区，等于没有守卫</td>
+<td>让守卫可用</td></tr>
+<tr><td>4</td><td>检查 <code>reference_price</code> 在复牌/退市整理首日的口径</td>
+<td>52/54 违规行都在 <code>open_status='unknown'</code> 那一天</td>
+<td>消除 −89% / +488% 的伪收益</td></tr>
+<tr><td>5</td><td>决定 <code>expert_weight_policy</code> 是否切到 <code>uncertainty</code></td>
+<td>温度标定代码存在但默认不生效</td>
+<td>降低专家权重在噪声上过拟合</td></tr>
+<tr><td>6</td><td>拆分或重命名 <code>momentum</code> / <code>flow</code> 块</td>
+<td>块内 rho 低至 −0.845，块分是两个信号的差</td>
+<td>让块的解释力与名字一致</td></tr>
+</tbody></table>
+
+<div class="verdict bad">
+<p class="t">明确不做的两件事</p>
+<p><b>不要据第 2 道的 937× 去否定既有收益结论。</b>该行不在研究池内、ADV 74 万、
+且账本用 raw price，<code>factor</code> 只进特征快照。潜在伤害和实际伤害差一到两个数量级。</p>
+<p><b>不要因为第 4 道 2023 年 41.5pp 的极差就说「换池子能赚 40pp」。</b>
+4/7 年成立、2/7 年反向，且 2024/2026 的反向幅度与正向同量级。
+正确说法是「流动性分层在部分年份可测」，不是「找到了 edge」。</p>
+</div>
+
+<h2>复现</h2>
+<pre>cd /Users/agiuser/Desktop/QuantLab
+.venv2/bin/python output/audit_20260925/return_provenance.py       # 第 2 道，6011 面板 / 41 秒
+.venv2/bin/python output/audit_20260925/factor_block_units.py      # 块量纲 + 留一消融，16 秒
+.venv2/bin/python output/audit_20260925/universe_and_resolution.py # 第 1/3/4 道，42 秒
+.venv2/bin/python output/audit_20260925/followup_probe.py          # 追问探针
+.venv2/bin/python output/audit_20260925/consolidate.py             # 收尾与稳健性
+
+产物：return_provenance.json / factor_block_units.json / universe_and_resolution.json
+     followup_probe.json / consolidated.json / factor_jumps_all.csv
+     limit_violations_all.csv / limit_violation_radius.csv</pre>
+
+</body>
+</html>

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from quantlab.data.contracts import InstrumentRules, timestamp
+from quantlab.data.exchange_rules import RULE_VERSIONS
 
 
 def money(x):
@@ -65,7 +66,7 @@ def trade_permission(bar, rule: InstrumentRules, side, date, *, allow_open_assum
     if not np.isfinite(px) or px <= 0: return False, "missing_open"
     # Full-day amount/volume is not available at the opening execution time.
     derived=(allow_open_assumption and bar.get('open_status')=='derived' and
-             bar.get('open_status_basis')=='daily_open_assumption' and bar.get('rule_version')=='cn_daily_v1')
+             bar.get('open_status_basis')=='daily_open_assumption' and bar.get('rule_version') in RULE_VERSIONS)
     if derived:
         from quantlab.data.exchange_rules import limit_ratio,limit_prices
         ratio=limit_ratio(rule.instrument_id,date,bar.get('is_st_at_open',np.nan),bar.get('listing_session_lower_bound'))

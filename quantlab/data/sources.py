@@ -104,7 +104,7 @@ class DataFeed:
                 need = ["code", "name", "price", "mktcap", "float_mktcap", "amount", "turnover", "pct_chg"]
                 spot = spot[[c for c in need if c in spot.columns]].copy()
                 spot["mktcap"] = pd.to_numeric(spot["mktcap"], errors="coerce")
-                spot["float_mktcap"] = pd.to_numeric(spot["float_mktcap"], errors="coerce") * 1e8
+                spot["float_mktcap"] = pd.to_numeric(spot["float_mktcap"], errors="coerce")  # already yuan
                 spot["amount"] = pd.to_numeric(spot["amount"], errors="coerce")
                 spot["turnover"] = pd.to_numeric(spot["turnover"], errors="coerce")
                 include = self._a_filter(spot)

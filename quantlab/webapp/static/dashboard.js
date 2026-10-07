@@ -80,8 +80,8 @@ function applyTheme(name) {
   try { localStorage.setItem(THEME_KEY, name); } catch (e) { /* private mode */ }
   const btn = $('themeToggle');
   if (btn) {
-    btn.textContent = name === 'dark' ? '☾' : '☀';
-    btn.setAttribute('aria-label', name === 'dark' ? '切换到亮色主题' : '切换到暗色主题');
+    btn.setAttribute('aria-label', name === 'dark' ? '切换到亮色主题' : '切换到深色主题');
+    btn.setAttribute('aria-pressed', name === 'dark' ? 'true' : 'false');
     btn.title = name === 'dark' ? '切换到亮色' : '切换到暗色';
   }
   // Charts read colours from CSS variables, so a theme change needs a redraw.
@@ -120,6 +120,7 @@ function bindTabs() {
       const on = b.dataset.pane === name;
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
     });
     document.querySelectorAll('.pane').forEach((p) => {
       p.classList.toggle('active', p.id === name);
@@ -128,7 +129,20 @@ function bindTabs() {
     const loaders = { 'holdings-pane': loadHoldings, 'signals-pane': loadSignals, 'experts-pane': loadExperts, 'run-pane': loadRun };
     if (loaders[name]) loaders[name]();
   };
-  buttons.forEach((b) => b.addEventListener('click', () => show(b.dataset.pane)));
+  buttons.forEach((b, index) => {
+    b.addEventListener('click', () => show(b.dataset.pane));
+    b.addEventListener('keydown', (event) => {
+      if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let next = index;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % buttons.length;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + buttons.length) % buttons.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = buttons.length - 1;
+      buttons[next].focus();
+      show(buttons[next].dataset.pane);
+    });
+  });
 }
 
 /* ----------------------------------------------------------------- charts */
@@ -252,6 +266,9 @@ function makeSortable(table, getRows) {
   if (!table) return;
   const heads = table.querySelectorAll('thead th.sortable');
   heads.forEach((th, idx) => {
+    th.setAttribute('aria-sort', 'none');
+    th.setAttribute('role', 'columnheader');
+    th.setAttribute('tabindex', '0');
     th.addEventListener('click', () => {
       const key = th.dataset.key || idx;
       const cur = state.sortState[table.id] || {};
@@ -259,6 +276,7 @@ function makeSortable(table, getRows) {
       state.sortState[table.id] = { key, dir };
       heads.forEach((h) => { h.classList.remove('sorted'); const a = h.querySelector('.arrow'); if (a) a.remove(); });
       th.classList.add('sorted');
+      heads.forEach((h) => h.setAttribute('aria-sort', h === th ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'));
       const arrow = document.createElement('span');
       arrow.className = 'arrow';
       arrow.textContent = dir === 'desc' ? '▼' : '▲';
@@ -276,6 +294,9 @@ function makeSortable(table, getRows) {
       const tbody = table.querySelector('tbody');
       rows.forEach((r) => tbody.appendChild(r));
     });
+    th.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); th.click(); }
+    });
   });
 }
 
@@ -288,6 +309,19 @@ function kpiCard(o) {
     <div class="meta">${meta}</div>
     ${o.spark || ''}
   </div>`;
+}
+
+function setDashboardStatus(kind, title, copy, meta = '只读') {
+  const banner = $('dashboardStatus');
+  if (!banner) return;
+  banner.classList.remove('is-good', 'is-warn', 'is-error');
+  if (kind) banner.classList.add(`is-${kind}`);
+  const titleEl = $('statusTitle');
+  const copyEl = $('statusCopy');
+  const metaEl = $('statusMeta');
+  if (titleEl) titleEl.textContent = title;
+  if (copyEl) copyEl.textContent = copy;
+  if (metaEl) metaEl.textContent = meta;
 }
 
 async function loadOverview() {
@@ -303,16 +337,18 @@ async function loadOverview() {
       ? '<span class="chip ok"><span class="dot ok"></span>研究账户 <b>可解释</b></span>'
       : `<span class="chip warn"><span class="dot warn"></span>研究账户 <b>${esc(d.status || '未验证')}</b></span>`;
     $('chipStatus').innerHTML = stateChip;
+    $('overviewAsOf').textContent = d.last_exec ? `执行日 ${d.last_exec}` : '等待可解释结果';
 
     if (!d.interpretable) {
       const rs = (d.blocked_reasons || []);
       const items = rs.length
-        ? `<ul style="margin:8px 0 0 18px;line-height:1.8;text-align:left;display:inline-block">${rs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
-        : '<div class="muted" style="margin-top:6px">未提供具体阻断原因</div>';
+        ? `<ul class="empty-list">${rs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
+        : '<div class="muted">未提供具体阻断原因</div>';
       host.innerHTML = `<div class="card"><div class="empty">
-        <span class="big">当前结果不可解释，按设计不发布绩效与买卖建议</span>
-        数据或验证未通过；这是门禁的正常结果，不是页面故障。${items}
+        <span class="big">当前结果不可解释，绩效和信号保持空态</span>
+        <span>数据或验证未通过；这是研究门禁的正常结果，不是页面故障。</span>${items}
       </div></div>`;
+      setDashboardStatus('warn', '当前结果不可解释', '绩效、回撤和买卖信号不会在缺失数据时被填成假数字。', d.status || 'blocked_data');
       // Hide the whole chart + risk region: an empty canvas and an empty gauge
       // read as "broken" rather than "not applicable".
       const grid = document.getElementById('overviewGrid');
@@ -320,6 +356,7 @@ async function loadOverview() {
       $('overviewNote').innerHTML = '';
       return;
     }
+    setDashboardStatus('good', '研究账户可解释', '已通过当前回放自身的解释性门禁，可以查看历史组合曲线和风险预算。', d.last_exec || '研究回放');
     const grid = document.getElementById('overviewGrid');
     if (grid) grid.style.display = '';
     const body = document.querySelector('#chart-pane .card-body');
@@ -328,20 +365,21 @@ async function loadOverview() {
     if (note) note.innerHTML = '回撤以账户历史净值为基准；面积为负值即为水下。右侧仪表标出当前回撤所在的政策档位。';
     $('rangeSeg').style.display = '';
 
+    const metrics = d.metrics || {};
     const sp = s.nav || [];
     // Drawdown is a risk magnitude, not a price move: colouring it by direction
     // would paint a 40% loss in "down" green and read as calm. Severity wins.
-    const ddMag = Math.abs(Number(d.metrics.max_drawdown) || 0);
+    const ddMag = Math.abs(Number(metrics.max_drawdown) || 0);
     const ddCls = ddMag > 0.25 ? 'up' : (ddMag > 0.18 ? 'risk' : 'flat');
     const ddNote = ddMag > 0.25 ? '超出25%研究预算' : (ddMag > 0.18 ? '超18%减仓档' : '预算内');
     const cards = [
-      kpiCard({ label: '总收益', value: fmtSignedPct(d.metrics.total_return), cls: dirClass(d.metrics.total_return), note: '全期扣费', spark: sparkline(sp) }),
-      kpiCard({ label: '年化收益', value: fmtSignedPct(d.metrics.annual_return), cls: dirClass(d.metrics.annual_return), note: '研究回放，非预期' }),
-      kpiCard({ label: '年化波动', value: fmtPct(d.metrics.annual_vol), note: `目标 ≤${fmtPct(d.target_vol)}` }),
-      kpiCard({ label: '夏普', value: fmtNum(d.metrics.sharpe), note: '日频年化' }),
-      kpiCard({ label: '最大回撤', value: fmtPct(d.metrics.max_drawdown), cls: ddCls, note: ddNote }),
-      kpiCard({ label: '卡玛', value: fmtNum(d.metrics.calmar), note: '年化/回撤' }),
-      kpiCard({ label: '胜率(日)', value: fmtPct(d.metrics.win_rate), note: '正收益日占比' }),
+      kpiCard({ label: '总收益', value: fmtSignedPct(metrics.total_return), cls: dirClass(metrics.total_return), note: '全期扣费', spark: sparkline(sp) }),
+      kpiCard({ label: '年化收益', value: fmtSignedPct(metrics.annual_return), cls: dirClass(metrics.annual_return), note: '研究回放，非预期' }),
+      kpiCard({ label: '年化波动', value: fmtPct(metrics.annual_vol), note: `目标 ≤${fmtPct(d.target_vol)}` }),
+      kpiCard({ label: '夏普', value: fmtNum(metrics.sharpe), note: '日频年化' }),
+      kpiCard({ label: '最大回撤', value: fmtPct(metrics.max_drawdown), cls: ddCls, note: ddNote }),
+      kpiCard({ label: '卡玛', value: fmtNum(metrics.calmar), note: '年化/回撤' }),
+      kpiCard({ label: '胜率(日)', value: fmtPct(metrics.win_rate), note: '正收益日占比' }),
       kpiCard({ label: '今年以来', value: fmtSignedPct(d.ytd), cls: dirClass(d.ytd), trend: d.ytd }),
     ];
     host.innerHTML = cards.join('');
@@ -349,7 +387,9 @@ async function loadOverview() {
     $('overviewNote').innerHTML = d.extra || '';
     drawCharts();
   } catch (e) {
-    host.innerHTML = `<div class="card"><div class="empty">看板数据加载失败：${esc(e.message)}</div></div>`;
+    setDashboardStatus('error', '看板数据暂时不可用', '请检查服务状态后重试；页面不会用缓存或猜测填充账户结果。', '读取失败');
+    if ($('overviewAsOf')) $('overviewAsOf').textContent = '读取失败';
+    host.innerHTML = `<div class="card"><div class="empty"><span class="big">看板数据加载失败</span><span>${esc(e.message)}</span></div></div>`;
   }
 }
 
@@ -432,25 +472,30 @@ async function loadHoldings() {
     const d = await api('/api/holdings');
     $('chipPrice').innerHTML = `<span class="dot pulse ok"></span>行情 <b>${esc(d.quote_time || '—')}</b>`;
     const s = d.summary || {};
-    const rg = { '-1': '深度熊市', '0': '震荡', '1': '牛市' }[String(s.regime_trend)] || '—';
-    $('holdNote').innerHTML = `<div class="callout">
-      <b>仓位口径</b>：市场状态「${esc(rg)}」，组合按中性风险档 ${fmtPct(s.gross_scale, 0)} 仓位运行。
-      ${s.gross_scale < 1 ? '当前处于风险降仓状态；未成交的退出仍受市场限制。' : ''}
-      这是按股数计价的模拟账户，不代表实际成交或券商持仓。
-    </div>`;
+    const rows = d.rows || [];
+    const rg = { '-1': '深度熊市', '0': '震荡', '1': '牛市' }[String(s.regime_trend)] || '待核';
+    const displayable = d.status === 'research_unvalidated' || d.status === 'unverified_data_gaps';
+    if (!rows.length || !displayable) {
+      const copy = d.status === 'blocked_data'
+        ? '账本或验证门禁未通过，页面不会从历史回放权重、目录扫描或 latest 指针猜测仓位。'
+        : '接口返回空快照，请先确认模拟账户状态。';
+      $('holdNote').innerHTML = `<div class="callout warn"><b>当前没有可展示的持仓快照</b>：${esc(copy)} <a href="/portfolio">查看账户行情状态</a></div>`;
+    } else {
+      $('holdNote').innerHTML = `<div class="callout"><b>仓位口径</b>：市场状态「${esc(rg)}」，组合按 ${fmtPct(s.gross_scale, 0)} 仓位运行。${s.gross_scale < 1 ? '当前处于风险降仓状态；未成交的退出仍受市场限制。' : ''} 这是按股数计价的主模拟账户，不代表实际成交或券商持仓。</div>`;
+    }
 
-    const totW = (d.rows || []).reduce((a, r) => a + (Number(r.weight) || 0), 0);
-    const tv = (d.rows || []).reduce((a, r) => a + (Number(r.market_value) || 0), 0);
+    const totW = rows.reduce((a, r) => a + (Number(r.weight) || 0), 0);
+    const tv = rows.reduce((a, r) => a + (Number(r.market_value) || 0), 0);
     $('hkpis').innerHTML = [
-      kpiCard({ label: '持仓数', value: String((d.rows || []).length), note: '只' }),
+      kpiCard({ label: '持仓数', value: String(rows.length), note: rows.length ? '只' : '当前为空' }),
       kpiCard({ label: '总权重', value: fmtPct(totW, 1), note: '中性档仓位' }),
       kpiCard({ label: '模拟市值', value: fmtMoneyCny(tv), note: '回放截至日' }),
       kpiCard({ label: '今日组合', value: fmtSignedPct(d.today), cls: dirClass(d.today), note: '加权估算' }),
-      kpiCard({ label: '今年组合', value: fmtSignedPct(d.ytd), cls: dirClass(d.ytd), note: '2026 起' }),
+      kpiCard({ label: '今年组合', value: fmtSignedPct(d.ytd), cls: dirClass(d.ytd), note: '今年以来' }),
     ].join('');
 
-    if (!(d.rows || []).length) {
-      $('htable').innerHTML = '<tbody><tr><td class="l"><div class="empty">当前无持仓</div></td></tr></tbody>';
+    if (!rows.length) {
+      $('htable').innerHTML = '<tbody><tr><td class="l"><div class="empty"><span class="big">当前无持仓行</span><span>等待已落盘且通过解释性门禁的模拟账户快照。</span></div></td></tr></tbody>';
       return;
     }
     const head = `<thead><tr>
@@ -459,17 +504,17 @@ async function loadHoldings() {
       <th class="sortable" data-key="4">现价</th><th class="sortable" data-key="5">今日</th>
       <th class="sortable" data-key="6">今年</th><th class="sortable" data-key="7">建仓至今</th>
       <th class="sortable" data-key="8">市值</th><th class="l">整手</th></tr></thead>`;
-    const body = (d.rows || []).map((r) => `<tr>
+    const body = rows.map((r) => `<tr>
       <td class="l mono">${esc(r.code)}</td><td class="l">${esc(r.name || '')}</td>
       <td>${weightBar(r.weight)}</td>
       <td>${esc(r.entry_date || '—')}</td>
       <td>${fmtNum(r.cost, 3)}</td>
-      <td>${fmtNum(r.price, 3)}</td>
+      <td>${fmtNum(r.live_quote || r.price, 3)}<span class="data-sub">${r.live_quote ? '公开价' : '账本价'}</span></td>
       <td data-key="5" class="${dirClass(r.pct_chg)}">${fmtSignedPct(r.pct_chg)}</td>
       <td data-key="6" class="${dirClass(r.return_ytd)}">${fmtSignedPct(r.return_ytd)}</td>
       <td data-key="7" class="${dirClass(r.return_since_entry)}">${fmtSignedPct(r.return_since_entry)}</td>
       <td data-key="8">${fmtMoneyCny(r.market_value)}</td>
-      <td class="l">${isNum(r.lot_cost) ? fmtMoney(r.lot_cost) + (r.lot_affordable ? '' : ' <span class="muted">↑可能超配</span>') : '—'}</td>
+      <td class="l">${isNum(r.lot_cost) ? fmtMoney(r.lot_cost) + (r.lot_affordable ? '' : ' <span class="muted">可能超配</span>') : '—'}</td>
     </tr>`).join('');
     $('htable').innerHTML = head + `<tbody>${body}</tbody>`;
     makeSortable($('htable'), () => Array.from($('htable').querySelectorAll('tbody tr')));
@@ -514,10 +559,12 @@ async function loadExperts() {
   try {
     const d = await api('/api/experts');
     if (d.status !== 'research_unvalidated') {
-      $('eMeta').textContent = '模型有效性尚未验证';
-      host.innerHTML = '';
+      $('eMeta').className = 'callout warn';
+      $('eMeta').innerHTML = '<b>专家结果保持空态</b>：当前回放未通过研究解释性门禁，页面不会把历史模型输出包装成新的建议。';
+      host.innerHTML = '<div class="card"><div class="empty"><span class="big">暂无可展示的专家结果</span><span>请先查看研究裁决台中的证据状态。</span><a class="btn btn-quiet btn-sm" href="/research">打开研究裁决</a></div></div>';
       return;
     }
+    $('eMeta').className = 'callout good';
     $('eMeta').innerHTML = `信息收集截至信号日 <b>${esc(d.date || '—')}</b> · 候选 ${d.n_candidates || 0} 只 · 行情因子 ${(d.coverage || {}).factors || '—'} 个`;
     const cards = Object.entries(d.experts || {}).map(([n, v]) => {
       const conf = Number(v.confidence) || 0;
@@ -533,7 +580,9 @@ async function loadExperts() {
     });
     host.innerHTML = cards.join('') || '<div class="card"><div class="empty">无专家输出</div></div>';
   } catch (e) {
-    host.innerHTML = `<div class="card"><div class="empty">专家加载失败：${esc(e.message)}</div></div>`;
+    $('eMeta').className = 'callout bad';
+    $('eMeta').innerHTML = `<b>专家信息读取失败</b>：${esc(e.message)}`;
+    host.innerHTML = '<div class="card"><div class="empty"><span class="big">请稍后重试</span><span>页面没有改变任何策略或账户状态。</span></div></div>';
   }
 }
 
@@ -556,10 +605,13 @@ function bindActions() {
   const refreshE = $('refreshE');
   if (refreshE) refreshE.addEventListener('click', async () => {
     const b = refreshE, spinner = $('loading');
-    b.disabled = true; if (spinner) spinner.style.display = 'inline-flex';
+    b.disabled = true; if (spinner) { spinner.hidden = false; spinner.style.display = 'inline-flex'; }
     try { await api('/api/experts?refresh=1'); await loadExperts(); }
-    catch (e) { alert('重算失败: ' + e.message); }
-    finally { b.disabled = false; if (spinner) spinner.style.display = 'none'; }
+    catch (e) {
+      $('eMeta').className = 'callout bad';
+      $('eMeta').textContent = `读取失败：${e.message}`;
+    }
+    finally { b.disabled = false; if (spinner) { spinner.hidden = true; spinner.style.display = 'none'; } }
   });
   const reloadE = $('reloadE');
   if (reloadE) reloadE.addEventListener('click', () => loadExperts());
