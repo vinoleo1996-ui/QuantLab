@@ -1669,3 +1669,14 @@ Quant Data OS 只覆盖沪深300 的 443 只；没有市值字段；北交所缺
 - **抽查属实但未修**：A3-01（parity 事后缩放）、A3-05（主题袖逐点中位数）、B5-01（前向剔 ST、252 天、3000–5000，回测不剔 ST、253 天、3001–5000）、A3-04（正式路径持仓上限 23）、A6-13（92 开头误判沪市）、A6-14、A6-15、A5-06、A6-03（采集和审计用了 .venv 3.14）。
 - **判断不同**：A3-02、B6-03 永久熔断是 r4 复核有意定下的规则（有测试固化），不是漏调用；该做的是量化它对旧结果的影响。
 - 其余条目多数针对旧主线、data_os、前向基础设施和展示层，不影响当前小盘线的判断，尚未逐条复核。
+
+## 三腿重构一期：S0–S2 地基（2026-10-07 23:20 CST，仅追加）
+
+计划：`~/.cursor/plans/三腿重构与验证改制_f354b27d.plan.md`（用户批准；一期 = 地基 + 验证制度 + A 腿 ETF 仓位 + B 腿价量族，结束后设决策闸门）。
+
+- **S0**：本地提交 `0efe326` + tag `smallcap-freeze-20261008`，未推送。159 个文件；提交前扫描未发现 Tushare token 或其他凭据。未提交：`data/`（6.7G，可重建）、`qlab_b/`（518M 运行产物）、`.research/`。
+- **S1 ST 规则统一**：`local_adapter.normalize_panel` 改为逐行调用 `exchange_rules.limit_ratio`（7-06 之前逐值不变）。**更正上一检查点**："小盘线用上游涨跌停价、不受影响"不成立——上游扩展数据集由 `local_adapter` 生成，v4 面板 `20261006T152412Z` 在 2026-07-06 至 09-22 有 8208 个主板 ST 股票日（153 只）仍是 5%。处理：`quantlab/smallcap/panel.py` 新增 `_restate_st_limits`，下次建面板时按 10% 重算；冻结数据集与现有 v4 版本不改。影响面：只涉及 ST 股票的最后 2.5 个月；M2、B 腿剔除 ST，A 腿用 ETF，均不受影响；已冻结的审计结果（回测池含 ST）在这一尾段有轻微偏差，未重跑。
+- **A6-13 北交所 92 开头**：`data_os/identity.py` 先判 4/8/92；`webapp/app.py` 三处改用已有的 `_local_market_exchange`；`data/sources.py` 的 baostock 对北交所直接返回 None。
+- 测试：`tests/test_review_fixes_20261007.py` 新增 4 项（adapter 7-06 前后、创业板/科创板不变、面板重算、92 开头）；.venv2 下与 test_local_adapter、test_data_os、test_portfolio_hub、test_realtime 共 69 项通过。sina 测试在 .venv2 因缺 `requests` 跳过（环境差异 A6-03 的一部分，未擅自安装）。
+- **S2 .venv2 复现**（Python 3.12.13，numpy 2.5.3，pandas 3.0.6；与 .venv 的 numpy/pandas 版本相同）：bitcheck 三条 D 路径差 0；rel_is/rel_oos 快照逐项相等；A 配置前 20 个种子 × 5 相位共 100 条路径，两段 NAV 差都是 0；DSR/PBO/规模回归最大差 1.4e-17。证据 `output/venv2_repro_20261008/`，脚本 `scripts/venv2_repro.py`。rel_oos 只是复现，不计新的样本外使用。结论：审计数字与环境无关，此后统一用 .venv2。
+- 下一项：S7 小盘测试 → S5 多资产真实账本 → 验证制度（试验台账）→ M2 冻结 + mandate 50 → A 腿 → B 价量族。

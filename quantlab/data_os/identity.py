@@ -22,10 +22,10 @@ def a_share_identity(symbol: str) -> dict:
         prefix, code = text[:2], text[2:8]
     else:
         code = text[-6:].zfill(6)
-        if code.startswith(("5", "6", "9")):
-            prefix = "sh"
-        elif code.startswith(("4", "8")):
+        if code.startswith(("4", "8", "92")):
             prefix = "bj"
+        elif code.startswith(("5", "6", "9")):
+            prefix = "sh"
         else:
             prefix = "sz"
     exchange = {"sh": "XSHG", "sz": "XSHE", "bj": "BJSE"}[prefix]

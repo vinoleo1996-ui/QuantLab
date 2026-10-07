@@ -1044,7 +1044,7 @@ def _portfolio_snapshot(*, include_public_quotes: bool = False) -> tuple[list[di
 def _stdlib_eastmoney_kline(code: str, start: str, end: str, market: str | None = None) -> pd.DataFrame | None:
     """Fetch public daily OHLCV without optional third-party HTTP packages."""
 
-    market_id = "1" if (market or ("sh" if code.startswith(("5", "6", "9")) else "sz")) == "sh" else "0"
+    market_id = "1" if (market or _local_market_exchange(code)) == "sh" else "0"
     params = {
         "secid": f"{market_id}.{code}",
         "klt": "101",
@@ -1166,7 +1166,7 @@ def _load_public_kline(code: str, start: str, end: str, market: str | None = Non
     frame = None
     source = None
     errors: list[str] = []
-    default_market = "sh" if code.startswith(("5", "6", "9")) else "sz"
+    default_market = _local_market_exchange(code)
     named_exchange = market is not None and market != default_market
     if not named_exchange:
         try:
@@ -1591,7 +1591,7 @@ def _terminal_kline(code: str, period: str, limit: int, market: str | None = Non
     bars = _bar_rows(frame, period, limit) if isinstance(frame, pd.DataFrame) and not frame.empty else []
     status, source_kind, as_of = "public_quote_unverified", "public_adapter", None
     adjustment = _public_kline_adjustment(source)
-    default_market = "sh" if code.startswith(("5", "6", "9")) else "sz"
+    default_market = _local_market_exchange(code)
     if not bars and market not in (None, default_market):
         return {"available": False, "status": "unavailable", "code": code, "frequency": period,
                 "bars": [], "candles": [], "source": source, "source_kind": source_kind,

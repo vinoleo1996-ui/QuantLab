@@ -160,3 +160,42 @@ def fixed_two_year_segments(excess):
     return dict(stages=rows, observation_2026H1=dict(sessions=len(tail),
         annualized_net_excess=float(tail.mean() * 252) if len(tail) else None,
         counts_toward_three_stages=False))
+
+
+def newey_west(y, x=None, lags=20):
+    """OLS coefficients and Newey-West t statistics; ``x=None`` tests the mean of ``y``."""
+    y = np.asarray(y, dtype=float)
+    X = np.ones((len(y), 1)) if x is None else np.column_stack([np.ones(len(y)), np.asarray(x, dtype=float)])
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    e = y - X @ beta
+    xe = X * e[:, None]
+    S = xe.T @ xe
+    for lag in range(1, min(lags, len(y) - 1) + 1):
+        w = 1 - lag / (lags + 1)
+        g = xe[lag:].T @ xe[:-lag]
+        S += w * (g + g.T)
+    inv = np.linalg.inv(X.T @ X)
+    se = np.sqrt(np.diag(inv @ S @ inv))
+    return beta, beta / se
+
+
+def win_rates(returns, benchmark=None):
+    """The three pre-registered win rates from daily simple returns (all reported, none chosen).
+
+    monthly_positive: share of calendar months with a positive return;
+    monthly_beat: share of months beating ``benchmark`` (same calendar);
+    rolling_12m_positive: share of month-ends whose trailing 12-month return is positive.
+    """
+    r = _returns(returns)
+    monthly = (1 + r).groupby(r.index.to_period('M')).prod() - 1
+    out = {'months': int(len(monthly)), 'monthly_positive': float((monthly > 0).mean())}
+    trailing = (1 + monthly).rolling(12).apply(np.prod, raw=True) - 1
+    trailing = trailing.dropna()
+    out['rolling_12m_positive'] = float((trailing > 0).mean()) if len(trailing) else float('nan')
+    if benchmark is not None:
+        b = pd.Series(benchmark, dtype=float).reindex(r.index)
+        if b.isna().any():
+            raise ValueError('benchmark_calendar_mismatch')
+        bench = (1 + b).groupby(b.index.to_period('M')).prod() - 1
+        out['monthly_beat'] = float((monthly > bench).mean())
+    return out

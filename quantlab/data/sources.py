@@ -406,6 +406,8 @@ class DataFeed:
         """Baostock 后端：全A前复权日线（含换手/涨跌幅/isST）。"""
         import baostock as bs
         cfg = CONFIG.data
+        if str(symbol).startswith(('4', '8', '92')):
+            return None  # baostock 不提供北交所行情
         sym = f"{'sh' if str(symbol).startswith(('6', '5', '9')) else 'sz'}.{symbol}"
         if not getattr(self, "_bs_logged_in", False):
             lg = bs.login()

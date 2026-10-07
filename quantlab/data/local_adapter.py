@@ -242,13 +242,9 @@ def normalize_panel(code,frame,states,cache,calendar,*,qlib_hash=None):
     if pd.notna(ipo):frame['listing_session_lower_bound']=calendar[calendar>=pd.Timestamp(ipo)].searchsorted(frame.index,side='right')
     ready=frame.is_st_at_open.notna()&frame.listing_session_lower_bound.ge(6)
     ratio=pd.Series(np.nan,index=frame.index)
-    if code.startswith('sh.688'):ratio.loc[ready]=.20
-    elif code.startswith(('sz.300','sz.301')):
-        modern=pd.Series(frame.index>=pd.Timestamp('2020-08-24'),index=frame.index)
-        ratio.loc[ready&modern]=.20
-        ratio.loc[ready&~modern]=np.where(frame.loc[ready&~modern,'is_st_at_open'].astype(bool),.05,.10)
-    elif code.startswith(('sh.600','sh.601','sh.603','sh.605','sz.000','sz.001','sz.002','sz.003')):
-        ratio.loc[ready]=np.where(frame.loc[ready,'is_st_at_open'].astype(bool),.05,.10)
+    rows=frame.loc[ready]
+    ratio.loc[ready]=[limit_ratio(code,d,st,n) for d,st,n in zip(rows.index,rows.is_st_at_open,rows.listing_session_lower_bound)]
+    ratio=pd.to_numeric(ratio,errors='coerce')
     frame['limit_ratio_at_open']=ratio
     frame['limit_up']=np.nan;frame['limit_down']=np.nan
     frame['open_status']='unknown';frame['open_status_reason']='historical_state_or_rule_missing'

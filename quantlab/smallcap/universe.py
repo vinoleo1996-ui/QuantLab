@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections import Counter
 import hashlib
+import math
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ def decision_grid(sessions, start, end, phase=0, step=20):
     return window[phase::step]
 
 
-def rolling_features(panel):
+def rolling_features(panel, with_st=False):
     """Positive-amount ADV (last 60 positive sessions), history count, 20d mean float cap."""
     amount = panel.field('amount')
     positive = amount.where(amount > 0)
@@ -46,13 +47,23 @@ def rolling_features(panel):
     adv = positive.apply(lambda col: col.dropna().rolling(ADV_WINDOW, min_periods=ADV_WINDOW).mean()
                          .reindex(col.index).ffill().where(col.notna()))
     cap = panel.field('float_mktcap').rolling(CAP_WINDOW, min_periods=10).mean()
-    return {'adv': adv, 'history': history, 'cap': cap}
+    features = {'adv': adv, 'history': history, 'cap': cap}
+    if with_st:
+        features['st'] = panel.field('is_st')
+    return features
 
 
-def pool_on(day, features, kind):
+def pool_on(day, features, kind, band='absolute', exclude_st=False, min_history=MIN_HISTORY):
+    """``band='relative'`` keeps ranks above ceil(0.6 N), the bottom 40 percent of eligible names.
+
+    ``exclude_st`` drops names flagged ST that day before ranking (needs ``features['st']``).
+    """
     adv = features['adv'].loc[day]
     history = features['history'].loc[day]
-    eligible = adv[(history >= MIN_HISTORY) & adv.notna()]
+    keep = (history >= min_history) & adv.notna()
+    if exclude_st:
+        keep &= ~features['st'].loc[day].reindex(adv.index).eq(1)
+    eligible = adv[keep]
     if kind == 'adv':
         ordered = eligible.sort_values(ascending=False, kind='mergesort')
     elif kind == 'cap':
@@ -60,10 +71,15 @@ def pool_on(day, features, kind):
         ordered = cap.sort_values(ascending=False, kind='mergesort')
     else:
         raise ValueError(kind)
-    if len(ordered) < RANK_START:
-        return []
-    band = ordered.iloc[RANK_START - 1:RANK_END]
-    return [code for code in band.index if adv[code] >= MIN_ADV]
+    if band == 'relative':
+        selected = ordered.iloc[math.ceil(0.6 * len(ordered)):]
+    elif band == 'absolute':
+        if len(ordered) < RANK_START:
+            return []
+        selected = ordered.iloc[RANK_START - 1:RANK_END]
+    else:
+        raise ValueError(band)
+    return [code for code in selected.index if adv[code] >= MIN_ADV]
 
 
 class Financials:

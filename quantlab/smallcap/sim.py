@@ -107,6 +107,7 @@ def simulate(market, schedule, initial_cash=600_000.0, costs=None, record=False)
     """
     costs = costs or Costs()
     col = {code: i for i, code in enumerate(market.codes)}
+    free = {col[c] for c in market.no_limits if c in col}
     signals = {pd.Timestamp(day).normalize(): weights for day, weights in schedule.items()}
     shares = {}           # column -> shares
     marks = {}            # column -> last valid close
@@ -145,7 +146,7 @@ def simulate(market, schedule, initial_cash=600_000.0, costs=None, record=False)
                 price = market.open[t, j]
                 if not np.isfinite(price) or price <= 0:
                     continue
-                if j not in market.no_limits and j < market.limit_up.shape[1]:
+                if j not in free and j < market.limit_up.shape[1]:
                     up, down = market.limit_up[t, j], market.limit_down[t, j]
                     if side > 0 and np.isfinite(up) and price >= up - 0.005:
                         continue

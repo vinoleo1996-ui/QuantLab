@@ -16,6 +16,8 @@ Rules (all decided before any account was run):
   ``announced_on``. Values are the stored snapshot; later restatements are not
   reconstructed (recorded as a limitation, not hidden).
 - Delisting: ``delist_date`` is the lifecycle date from the instrument records.
+- Main-board ST limits from 2026-07-06 are restated to 10 percent from the stored
+  reference price (the source dataset predates the rule change).
 """
 from __future__ import annotations
 
@@ -96,6 +98,22 @@ def _panel_frame(root, entry, code):
         up, down = bj_limits(out['close'].shift(1))
         out['limit_up'] = out['limit_up'].fillna(pd.Series(up, index=out.index))
         out['limit_down'] = out['limit_down'].fillna(pd.Series(down, index=out.index))
+    return _restate_st_limits(code, frame, out)
+
+
+def _restate_st_limits(code, frame, out):
+    """Source rows built before the 2026-07-06 rule change still carry 5% ST limits."""
+    from quantlab.data.exchange_rules import MAIN_BOARD_ST_10PCT, limit_prices, limit_ratio
+    if 'limit_ratio_at_open' not in frame or 'reference_price' not in frame:
+        return out
+    stored = pd.to_numeric(frame['limit_ratio_at_open'], errors='coerce')
+    reference = pd.to_numeric(frame['reference_price'], errors='coerce')
+    candidates = (frame.index >= MAIN_BOARD_ST_10PCT) & out['is_st'].eq(1).to_numpy() \
+        & np.isclose(stored, .05) & np.isfinite(reference) & (reference > 0) & out['limit_up'].notna().to_numpy()
+    for date in frame.index[candidates]:
+        ratio = limit_ratio(code, date, True, 6)
+        if ratio is not None and not np.isclose(ratio, .05):
+            out.loc[date, ['limit_up', 'limit_down']] = limit_prices(float(reference.loc[date]), ratio)
     return out
 
 
