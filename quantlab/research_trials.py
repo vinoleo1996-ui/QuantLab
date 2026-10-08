@@ -55,14 +55,19 @@ def register(family, trial_id, *, prereg='', source='', data='', segment='', rol
 
 
 def record_outcome(family, trial_id, outcome, note='', ledger=LEDGER):
-    """Outcomes are appended as a new row with role copied, never edited in place."""
+    """Outcomes are appended as a new row with role copied, never edited in place.
+
+    Rows are numbered ``#outcome1, #outcome2, ...`` and carry the sha256 of the pre-registration as it
+    is when the outcome is recorded, so a header correction after registration stays visible."""
     if outcome not in OUTCOMES:
         raise ValueError('invalid_outcome')
-    previous = [r for r in rows(ledger) if r['family'] == family and r['trial_id'] == trial_id]
-    if not previous:
+    existing = [r for r in rows(ledger) if r['family'] == family]
+    base = next((r for r in existing if r['trial_id'] == trial_id), None)
+    if base is None:
         raise ValueError(f'trial_not_registered:{family}/{trial_id}')
-    base = previous[0]
-    row = dict(base, trial_id=f'{trial_id}#outcome{len(previous)}', outcome=outcome, note=note,
+    number = 1 + sum(r['trial_id'].startswith(f'{trial_id}#outcome') for r in existing)
+    row = dict(base, trial_id=f'{trial_id}#outcome{number}', outcome=outcome, note=note,
+               prereg_sha256=sha256_file(ROOT / base['prereg']) if base['prereg'] else '',
                registered_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
     with open(ledger, 'a', newline='', encoding='utf-8') as handle:
         csv.DictWriter(handle, fieldnames=COLUMNS).writerow(row)

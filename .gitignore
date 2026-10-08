@@ -22,3 +22,8 @@ data/openquant/
 data/smallcap_v4/
 data/smallcap_events/
 data/smallcap_assets/
+
+# event/flow collections (1.5 GB, rebuildable with scripts/collect_info_em.py; audit JSONs stay tracked)
+data/smallcap_info/raw/
+data/smallcap_info/*.parquet
+data/smallcap_info/*.log

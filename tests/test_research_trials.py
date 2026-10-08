@@ -27,6 +27,20 @@ class TrialLedger(unittest.TestCase):
             with self.assertRaises(ValueError):
                 T.register('a', 'z', outcome='great', ledger=ledger)
 
+    def test_outcomes_are_numbered_and_hash_the_current_prereg(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = Path(folder) / 'ledger.csv'
+            prereg = Path(folder) / 'prereg.md'
+            prereg.write_text('first')
+            first = T.register('a', 'x', prereg=str(prereg), ledger=ledger)['prereg_sha256']
+            T.record_outcome('a', 'x', 'pending', ledger=ledger)
+            prereg.write_text('corrected header')
+            row = T.record_outcome('a', 'x', 'pass', ledger=ledger)
+            self.assertEqual([r['trial_id'] for r in T.rows(ledger)], ['x', 'x#outcome1', 'x#outcome2'])
+            self.assertNotEqual(row['prereg_sha256'], first)
+            self.assertEqual(row['prereg_sha256'], T.sha256_file(prereg))
+            self.assertEqual(T.count('a', ledger=ledger), 1)
+
 
 class WinRatesAndNeweyWest(unittest.TestCase):
     def test_win_rates_three_definitions(self):
