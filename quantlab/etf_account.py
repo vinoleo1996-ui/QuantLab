@@ -26,8 +26,11 @@ def fee(value, cost_mult):
     return max(MIN_FEE, value * COMMISSION) * cost_mult + value * SLIP * cost_mult if value > 0 else 0.0
 
 
-def replay(bars, targets, start, end, cash=600_000.0, cost_mult=1.0):
-    """``targets``: {signal session: {code: weight}}; trades at the next session's open."""
+def replay(bars, targets, start, end, cash=600_000.0, cost_mult=1.0, lot=LOT):
+    """``targets``: {signal session: {code: weight}}; trades at the next session's open.
+
+    ``lot`` is the trading unit in shares (convertible bonds: 10 bonds = 1000 yuan face value).
+    """
     f = frames(bars)
     dates = f['close_hfq'].loc[pd.Timestamp(start):pd.Timestamp(end)].index
     schedule = {dates[dates.searchsorted(pd.Timestamp(day), side='right')]: weights
@@ -52,14 +55,14 @@ def replay(bars, targets, start, end, cash=600_000.0, cost_mult=1.0):
                 if weight > 0 and raw and math.isfinite(raw) and math.isfinite(adj):
                     orders.append((weight * value - units.get(code, 0.0) * adj, code, raw, adj))
             for delta, code, raw, adj in sorted(orders):
-                shares = math.floor(abs(delta) / raw / LOT) * LOT
+                shares = math.floor(abs(delta) / raw / lot) * lot
                 if shares == 0:
                     continue
                 amount = shares * raw
                 cost = fee(amount, cost_mult)
                 if delta > 0:
                     if amount + cost > cash:
-                        shares = math.floor((cash - MIN_FEE) / raw / (1 + COMMISSION + SLIP) / LOT) * LOT
+                        shares = math.floor((cash - MIN_FEE) / raw / (1 + COMMISSION + SLIP) / lot) * lot
                         if shares <= 0:
                             continue
                         amount, cost = shares * raw, fee(shares * raw, cost_mult)
