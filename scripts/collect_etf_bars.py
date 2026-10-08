@@ -29,6 +29,14 @@ ETFS = {
     'sh512480': 'semiconductor_etf',
     'sh512880': 'securities_etf',
     'sh512660': 'defense_etf',
+    'sh510500': 'csi500_etf',
+    'sh510880': 'dividend_etf',
+    'sh512890': 'dividend_lowvol_etf',
+    'sz159985': 'soymeal_etf',
+    'sz159980': 'nonferrous_etf',
+    'sh513500': 'sp500_qdii_etf',
+    'sz159920': 'hangseng_qdii_etf',
+    'sh511380': 'convertible_bond_etf',
 }
 
 
