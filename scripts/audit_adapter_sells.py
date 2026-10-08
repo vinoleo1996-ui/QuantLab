@@ -52,7 +52,7 @@ def stuck(result, rows):
 
 
 def main(path):
-    path = Path(path)
+    path = Path(path).resolve()
     rows = json.loads(path.read_text())['targets']
     root = book.MANIFEST.parent
     manifest = json.loads(book.MANIFEST.read_text())
