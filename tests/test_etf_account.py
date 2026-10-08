@@ -30,5 +30,14 @@ class EtfAccountTest(unittest.TestCase):
         self.assertGreater(result['nav'].iloc[-1], 9_950)
 
 
+    def test_missing_session_keeps_last_close(self):
+        data = bars([('2020-01-01', 'A', 1.0, 1.0, 1.0), ('2020-01-01', 'B', 1.0, 1.0, 1.0),
+                     ('2020-01-02', 'A', 1.0, 1.0, 1.0), ('2020-01-02', 'B', 1.0, 1.0, 1.0),
+                     ('2020-01-03', 'B', 1.0, 1.0, 1.0), ('2020-01-06', 'A', 1.0, 1.0, 1.0),
+                     ('2020-01-06', 'B', 1.0, 1.0, 1.0)])
+        nav = replay(data, {'2020-01-01': {'A': 0.5}}, '2020-01-01', '2020-01-06', cash=10_000)['nav']
+        self.assertAlmostEqual(nav.loc['2020-01-03'], nav.loc['2020-01-02'])
+
+
 if __name__ == '__main__':
     unittest.main()

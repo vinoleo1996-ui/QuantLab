@@ -36,14 +36,15 @@ def load():
 
 
 def signals(bars, start, end):
-    close = bars.pivot_table(index='date', columns='code', values='close_hfq').sort_index()
+    observed = bars.pivot_table(index='date', columns='code', values='close_hfq').sort_index()
+    close = observed.ffill()
     signal_days = month_ends(close.index, pd.Timestamp(start) - pd.Timedelta(days=40), end)
     signal_days = signal_days[signal_days < pd.Timestamp(start)][-1:].append(
         signal_days[signal_days >= pd.Timestamp(start)])
     rotation, equal = {}, {}
     for day in signal_days:
         history = close.loc[:day]
-        counts = history.notna().sum()
+        counts = observed.loc[:day].notna().sum()
         available = [c for c in CANDIDATES if counts.get(c, 0) >= HISTORY and pd.notna(history[c].iloc[-1])]
         equal[day] = {c: 0.99 / len(available) for c in available} if available else {}
         scores = {}

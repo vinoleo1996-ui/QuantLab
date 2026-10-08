@@ -14,8 +14,12 @@ SLIP, COMMISSION, MIN_FEE, LOT = 0.0005, 0.00025, 5.0, 100
 
 
 def frames(bars):
+    """Missing sessions (suspension) keep the last close for valuation; trading needs a real open."""
     pivot = lambda field: bars.pivot_table(index='date', columns='code', values=field, aggfunc='last').sort_index()
-    return {name: pivot(name) for name in ('open_raw', 'open_hfq', 'close_hfq')}
+    out = {name: pivot(name) for name in ('open_raw', 'open_hfq', 'close_hfq')}
+    out['mark_hfq'] = out['close_hfq'].ffill()
+    out['mark_open_hfq'] = out['open_hfq'].fillna(out['mark_hfq'].shift(1)).where(out['mark_hfq'].notna())
+    return out
 
 
 def fee(value, cost_mult):
@@ -33,7 +37,8 @@ def replay(bars, targets, start, end, cash=600_000.0, cost_mult=1.0):
     for day in dates:
         if day in schedule:
             opens = f['open_hfq'].loc[day]
-            value = cash + sum(u * opens[c] for c, u in units.items())
+            marks = f['mark_open_hfq'].loc[day]
+            value = cash + sum(u * marks[c] for c, u in units.items())
             for code in list(units):
                 if schedule[day].get(code, 0.0) <= 0 and math.isfinite(opens[code]):
                     proceeds = units.pop(code) * opens[code]
@@ -65,8 +70,8 @@ def replay(bars, targets, start, end, cash=600_000.0, cost_mult=1.0):
                     cash += amount - cost
                 fees += cost
                 trades += 1
-        closes = f['close_hfq'].loc[day]
-        navs.append(cash + sum(u * closes[c] for c, u in units.items() if math.isfinite(closes[c])))
+        closes = f['mark_hfq'].loc[day]
+        navs.append(cash + sum(u * closes[c] for c, u in units.items()))
     nav = pd.Series(navs, index=dates, name='nav')
     return {'nav': nav, 'trades': trades, 'fees': fees}
 
