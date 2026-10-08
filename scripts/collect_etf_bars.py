@@ -37,6 +37,8 @@ ETFS = {
     'sh513500': 'sp500_qdii_etf',
     'sz159920': 'hangseng_qdii_etf',
     'sh511380': 'convertible_bond_etf',
+    'sh513030': 'dax_qdii_etf',
+    'sh510900': 'hscei_qdii_etf',
 }
 
 
