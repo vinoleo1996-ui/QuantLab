@@ -82,10 +82,13 @@ def chinabond_day(day):
 def chinabond(first='2014-01-02', last='2026-09-30'):
     from quantlab.smallcap.panel import Panel
     sessions = Panel('20261006T152412Z').sessions
+    from concurrent.futures import ThreadPoolExecutor
     days = [str(d.date()) for d in sessions if pd.Timestamp(first) <= d <= pd.Timestamp(last)]
+    with ThreadPoolExecutor(4) as pool:
+        payloads = list(pool.map(chinabond_day, days))
     rows = []
-    for index, day in enumerate(days):
-        for curve in json.loads(chinabond_day(day)):
+    for index, (day, payload) in enumerate(zip(days, payloads)):
+        for curve in json.loads(payload):
             name = CURVES.get(curve['ycDefId'])
             points = dict(map(tuple, curve.get('seriesData') or []))
             if name:
