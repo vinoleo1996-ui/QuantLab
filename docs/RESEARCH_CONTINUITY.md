@@ -1,6 +1,64 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-02 10:55 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-12 23:30 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## P4 重构实施检查点（2026-10-13 00:40 CST，部分账户回放运行中）
+
+已落地并有测试（新增 46 项，全部通过）：
+
+- 云端采集 `quantlab/cloud/`、`scripts/cloud_pull.py`：按月分段导出，逐段核对 `x-byte-length`、`x-row-count`、parquet 首尾标记和 sha256，快照只增不改，`--wait` 在服务中断时每 2 分钟重试续传。快照：`sw_l1_members` 7920 行、`daily_ohlcv_raw_pit` 44467 行（2026-09-23 至 10-12，5566 只）、`stock_basic_incl_delisted` 5912 行，均与云端目录行数一致；`financials_pit` 只到 1993 年，服务数次拒绝连接，后台续传中。云端日线与 Baostock 抽查一致（600519 在 10-12 开 1262.95、收 1288.00、量 3155604）。
+- 数据集 v5 `quantlab/dataset_v5.py`、`scripts/build_dataset_v5.py`：v4 历史逐字节保留，新行按 v4 面板 35 列生成；单位取自云端表自带的 `volume_unit`/`amount_unit`；云端日线从 9-23 开始、与 v4 无重叠，所以接缝用 `daily_basic_full` 9-01 至 9-22 收盘逐值比对，复权因子在接缝处用 Tushare `pre_close` 反推（首日即除权也正确）。还差 `daily_basic_full` 窗口快照，未构建。
+- P4 账本 `quantlab/p4_ledger.py`：沿用 `stable_book.replay_account`，只在单次回放内把本金换成 80 万。
+- 基线 `scripts/p4_baselines.py`，结果 `output/p4_baselines_20261012/summary.json`（2018-01-02 至 2026-09-22）：
+  - M2 池子等权（不计成本、20 天重组）年化 **17.15%**、回撤 **−34.3%**；
+  - 冻结 M2 按 80 万重放 10 条路径：成本 1 倍中位 **10.89%**（9.62%–12.18%）、回撤中位 **−30.1%**；成本 2 倍中位 **9.55%**、回撤 −30.5%；20 本账户检查全部通过（2026-10-13 03:50 完成）；
+  - 中证 2000 全收益 5.09%、回撤 −39.7%；
+  - RP3（含可转债，P4 不可用，只作参照）中位 9.08%、回撤 −18.2%。
+  - 结论：80 万与 60 万口径结果一致（原 M2 10.83%/−29.7%）。股票池本身是 17% 的 beta，现有池内选股反而少赚约 6 个点；回撤靠选股压不进 25%。
+- 池内 alpha：`quantlab/alpha/{features,labels,models,portfolio}.py`、`scripts/p4_alpha.py`；预注册 `docs/prereg/P4_ALPHA.md`（sha `29f52fd3…`）已登记 `P4_alpha/LIN`、`GBDT` 两次试验和 `POOL50` 诊断。全流程只在 2017-06 至 2018-06 的短窗口无财务数据下跑通过机制（输出 `output/p4_alpha_smoke/`，不是结果，不得引用）。正式运行按预注册要等完整的 `financials_pit` 快照，不改用本地修订值。
+- 跨资产配比：`quantlab/p4_alloc.py`、`scripts/p4_alloc.py`；预注册 `docs/prereg/P4_ALLOC.md`（sha `aed28c97…`）已登记 `P4_alloc/ALLOC60` 和两个诊断。看结果前把"五类资产波动率倒数、股票 50–70%"改为"股票固定 60%、其余在 ETF 间波动率倒数"，因为国债的低波动会把股票永远压到下限；改动和理由写在预注册里。打新估计复核：常数 60 万持仓得到 80 万口径 2.04%，与 P3 的 2.72%（60 万口径）一致；48 万持仓约 1.92%，计入门槛时封顶 1.5%。等 P4_alpha 判定后运行。
+- AI 因子工坊：`quantlab/factor_lab/{dsl,referee,proposer}.py`、`scripts/factor_lab.py`、预注册 `docs/prereg/P4_FACTORLAB.md`。公式语言只允许读过去数据；前向裁判按《Propose, Don't Judge》用 e 值与在线 e-BH（α=0.1、100 个名额）。原拟每 20 天一次观测，测试显示好因子要几十年才能收录，改为每日次日秩相关（δ=0.005、λ=0.9），20 天持有期只在历史筛选里检验；改动发生在任何真实候选进入前向之前。首批 10 个大模型候选（`nemotron-3-super` 免费模型，一次调用）历史筛选 5 过 5 不过，10 个都登记为 `P4_factorlab` 试验；5 个通过者从 2026-09-22 之后开始前向积累，目前 0 个观测。
+- 事件排雷代理：`quantlab/agents/event_risk.py`、`scripts/event_agent.py`，大模型调用统一走 `quantlab/llm.py`（钥匙串取密钥、模型轮换、每天合计 40 次）。首次前向复核 RP3 快照中的 3 只持仓，均未否决；输出只有否决标记和引用的证据键，没有评级和订单。今日大模型调用 10 次。
+
+技术事件：克隆 `git://100.124.230.108/QuantLab.git` 时目标目录被移入废纸篓，git 仍往 `~/.Trash/QuantLab-box` 写入并占用中继带宽，已由本代理终止该克隆进程。Tailscale 仍走多伦多中继（约 0.3–2 秒往返），云端服务多次无响应或拒绝连接。
+
+全局正式试验数 91（含 P4_alpha 2、P4_alloc 1、P4_factorlab 10）。`promotion_approved=false`。下一开放问题：`daily_basic_full` 窗口与 `financials_pit` 快照完整后，构建 v5 并正式运行 P4_alpha；M2 80 万基线跑完后写入 summary。
+
+## P4 目标变更与重构启动（2026-10-12 23:30 CST，未跑账户）
+
+- 用户 23:20 定：本金 60 万改为 **80 万**；资产范围为 A 股股票、场内 ETF（黄金、纳指/标普 QDII、国债）和打新，不做可转债；扣费后年化 12% 为必过线、15% 为目标，研究回撤不超过 25%，成本翻倍后不低于 10%；只做多、无杠杆、股票最多 50 只。
+- 写入 `quantlab/p4_mandate.py`（`p4_v1_20261012`，指纹 `a425d8c4…2971`），P4 各层只从这里取约束。此前所有 60 万口径的冻结结果不改写、不按 80 万重述。
+- 重构方案见 `~/.cursor/plans/自有量化策略重构_da63ceff.plan.md`：小盘溢价作股票 beta 底仓；池内 alpha 用按时点基本面加线性/LightGBM 二选一；大模型只提因子、冻结裁判决定收录；ETF 跨资产配比；打新叠加；事件排雷代理只做前向。`promotion_approved=false`。
+
+## 用户授权与数据需求（2026-10-12 22:55 CST，未采集、未跑账户）
+
+- 用户选择：预注册一次「QuantMind 式 LightGBM 截面排序」对照，先把日线更新到最新；TradingAgents 只作前向侧车，不进账户。预注册尚未写。
+- Baostock 22:50 单次登录探测成功（10-08 的黑名单已解除），`sh.600519` 可取到 2026-10-12 日线；只发了一次查询，未批量采集。上次被封原因是 6 进程并发，再采只用单进程限速。
+- 已向用户列出所需数据（日线与交易状态、指数、资产负债/现金流 PIT、个股资金流、筹码、概念与公告的前向快照、LLM 凭据）。用户 22:55 定：日线走云端，由用户给云端下需求；要求按代码精度经验对系统做升级改造。
+- 云端接口另有 `/datasets/{id}/export.parquet`（按 start/end/symbol 整段导出）；`/query` 单次上限 50000 行、无 offset。
+- 用户 22:58 提供 OpenRouter 密钥（免费档）。密钥只存在 macOS 钥匙串（service `openrouter_api_key`，account `quantlab`），不写入仓库、配置或台账；读取用 `security find-generic-password -a quantlab -s openrouter_api_key -w`。免费模型 15 个，其中 4 个同时支持工具调用和结构化输出（`google/gemma-4-31b-it:free`、`google/gemma-4-26b-a4b-it:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`dots-studio/dots-3-note-preview:free`）。实测 `nemotron-3-super` 可用、`gemma-4-31b` 被上游共享池 429 限流，所以侧车要按模型列表轮换并记录每次失败。
+
+## QuantMind / TradingAgents 新版源码通读与数据可行性（2026-10-12 22:50 CST，仅只读，无账户）
+
+用户问：两仓的思想和核心算法是什么，本地加云端数据能否支持换成那样的架构。本轮克隆到 `/tmp/ext`：QuantMind `7d8019c`（2026-10-11，AGPL-3.0），TradingAgents `1394a3f`（2026-10-03，Apache-2.0）；此前台账核对的是 `e17560c` / `35543d0`。未跑账户、未训练、未改源码，`promotion_approved=false`。
+
+**QuantMind 实际算法（已在代码核实）：**
+- 训练在 `docker/training/`：A 股默认直读 QuantDB 供应商预算的 `l1_factors` 宽表（`quantdb_factor_reader.py:38`）。标签 `close[T+1+H]/close[T+1]−1`，H 默认 1，再按日截面 `rank(pct)−0.5`（`data/loading.py:558-621`）；train/valid 尾部各裁 H+1 日作 embargo（`data/splits.py:103-127`）；默认 LightGBM `regression/l2`、`num_leaves=31`、`lr=0.02`、`min_data_in_leaf=300`（`model_trainers/trainers_gbdt.py:28-46`）。可选 IC/ICIR 预筛 80 列，入册门槛 test RankICIR≥0.05。不做行业/市值中性化；训练侧没有财务公告日 PIT；默认全 A 剔北交所，`l1_factors` 直读时不剔 ST。
+- 特征目录 `config/features/model_training_feature_catalog_v1.json` 534 列，元数据写明默认只勾 112 列：L2、资金流、微观结构共 31 列只在 2026 年分区存在，2016–2025 训练区间全为空。所以它默认模型实际是日频价量 + 风格 + 行业 + 筹码 + 概念 + 估值/基本面。
+- 组合：默认 `standard_topk` = Qlib `TopkDropout`，topk=50、n_drop=10、等权、3 日调仓、止损 −8%、T+1 开盘成交；成本 2.5bp 佣金、卖出 5bp 印花税、5bp 冲击。`position_signal.py` 双门槛（行业前 20% 且全市场前 40%）、`0.16/0.30/0.27/0.27` 混合（第四维是上市板块）、`p³`、半凯利上限 0.70、映射到 0.10–0.99，只给终端展示，交易与模拟不消费。
+- RD-Agent/AlphaAgent：LLM 提假设、写 `factor.py`，在 Qlib 日频 `$open/$close/$volume/$factor` 上回测，由 LLM 判断是否替换 SOTA；结果写入 `rd_agent_factors`，不自动并入默认训练矩阵。仓内 L2 CatBoost +60% 等收益是写死的报告文本，不是代码产出。
+
+**TradingAgents 实际算法：** 单股票、单日期的 LangGraph 流程：四个分析师并行取数 → 多空辩论 → 研究经理给五档评级 → 交易员提案 → 激进/保守/中性三方辩论 → 组合经理定评级；5 个交易日后按地区指数算 alpha，LLM 写 2–4 句反思，只在结算日早于分析日时注入后续提示。`backtest.py` 明写不是组合模拟，只统计评级方向命中与平均 alpha。数据为 Yahoo/Alpha Vantage/SEC/FRED/StockTwits/Reddit/Polymarket；A 股只有 Yahoo `.SS/.SZ` 行情可用，历史日期的无日期财报和公司概况会被扣留。
+
+**数据可行性：**
+- 支持（QuantMind 默认 112 列中的大部分）：价量、波动、流动性、GTJA191、技术、筹码近似、Beta/特质波动由本地 v4 面板（6040 只含退市，2014-01-02..2026-09-22，OHLCV/换手/流通市值/涨跌停/ST/PB）和中证指数计算；行业由云端 `sw_l1_members`（进出日期）；估值和基本面由云端 `financials_pit`（带 `available_at`）、`ep_pit_daily`、`float_mktcap`（含总市值与换手）、`dividend_tushare`。这部分财务时点比 QuantMind 自身训练更严格。
+- 不支持：概念热度 10 列（本地只有 2026-09-30 当前概念快照，无历史成分）；L2、资金流、微观结构（无逐笔/L2，QuantMind 自身默认也不用）；全量资产负债表与现金流表（云端只有比率）。
+- 额外可用、QuantMind 没有：两融明细、龙虎榜与机构席位、解禁、北向持股（日频约到 2024-08）、ETF 份额流。
+- 近端缺口：本地日线只到 2026-09-22，前向推理和 RP3 结算都需要先更新面板。
+
+**对决策的影响：** QuantMind 的「日频宽特征 + LightGBM 截面排序 + TopK」在现有数据上可以做，财务部分还能做到 PIT；TradingAgents 的辩论层与数据无关，可以换成本仓 A 股工具，但 LLM 训练语料含历史结果，历史回放不能当证据，只能从前向开始记录。按其默认 3 日调仓、n_drop=10 估算，单边年换手最高约 16 倍，按本仓 30bp 滑点约 11%/年成本，按其自带成本约 3%/年，所以若做首轮对照，需另行预注册 H 与调仓频率。QuantMind 为 AGPL，宜按公式重写而不复制源码。本仓价量打分的失败结果不用于判这套非线性模型的负。
+
+下一开放问题：用户是否授权预注册一次「QuantMind 式 LightGBM 截面排序」单机制对照（特征只用上述可支持列，财务按 `available_at`，同 60 万、≤50 只、同成本），以及是否先更新日线面板；TradingAgents 是否仅作前向侧车。未授权前不启动。
 
 ## 补宏观发布日、指数名单和沪深300行情截止日（2026-10-02 10:55，数据层，无账户）
 
