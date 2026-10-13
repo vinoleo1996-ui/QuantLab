@@ -152,8 +152,48 @@ def stage_leak():
     print(json.dumps(out, indent=1, ensure_ascii=False))
 
 
+def stage_execution(path='POOL50_p0_s1', gross=None):
+    """Replay one POOL50 path and split execution drag into named pieces (annualized share of mean NAV)."""
+    from quantlab import p4_ledger
+    plans = P.plans(ALPHA, P.ANCHOR)
+    targets = p4_ledger.to_targets(plans[path])
+    result = p4_ledger.replay(targets, start=P.ANCHOR, end=P.END, cost_mult=1.0, gross=gross)
+    fills = pd.DataFrame(result['fills'])
+    account = pd.DataFrame(result['account'])
+    nav = result['nav']
+    years = (nav.index[-1] - nav.index[0]).days / 365.25
+    scale = 1 / (float(nav.mean()) * years) * 100
+    close = Panel(P.PANEL).field('close')
+    fills['open'] = np.where(fills.side.eq('buy'), fills.price - fills.slippage_cost / fills.quantity,
+                             fills.price + fills.slippage_cost / fills.quantity)
+    signal_close = [close.at[pd.Timestamp(s), c] if pd.Timestamp(s) in close.index and c in close.columns else np.nan
+                    for s, c in zip(fills.signal_date, fills.instrument_id)]
+    fills['signal_close'] = signal_close
+    sign = np.where(fills.side.eq('buy'), 1.0, -1.0)
+    timing = float(np.nansum(sign * fills.quantity * (fills.open - fills.signal_close)))
+    cash_ratio = (account['cash'] / account['nav']).astype(float) if {'cash', 'nav'} <= set(account) else pd.Series(dtype=float)
+    pieces = {
+        '开盘成交相对信号日收盘的价差': timing * scale,
+        '滑点': float(fills.slippage_cost.sum()) * scale,
+        '佣金': float(fills.commission.sum()) * scale,
+        '印花税': float(fills.stamp_tax.sum()) * scale,
+        '红利税': float(fills.dividend_tax.sum()) * scale,
+    }
+    out = dict(path=path, gross=gross, cagr=result['summary']['cagr'], years=years,
+               pieces_pp_per_year={k: round(v, 3) for k, v in pieces.items()},
+               mean_cash_share=float(cash_ratio.mean()) if len(cash_ratio) else None,
+               fills=len(fills), checks_passed=result['summary']['account_checks_passed'])
+    shortfall = [e for e in result.get('orders', []) if e.get('reject_reason')]
+    reasons = pd.Series([o['reject_reason'] for o in shortfall]).value_counts().to_dict() if shortfall else {}
+    out['order_reject_reasons'] = reasons
+    OUT.mkdir(parents=True, exist_ok=True)
+    fills.to_csv(OUT / f'execution_fills_{path}.csv', index=False)
+    (OUT / f'execution_{path}.json').write_text(json.dumps(out, indent=1, ensure_ascii=False, default=float))
+    print(json.dumps(out, indent=1, ensure_ascii=False, default=float))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=('decay', 'turnover', 'leak'))
+    parser.add_argument('stage', choices=('decay', 'turnover', 'leak', 'execution'))
     args = parser.parse_args()
-    {'decay': stage_decay, 'turnover': stage_turnover, 'leak': stage_leak}[args.stage]()
+    {'decay': stage_decay, 'turnover': stage_turnover, 'leak': stage_leak, 'execution': stage_execution}[args.stage]()
