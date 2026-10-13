@@ -4,7 +4,7 @@
 
 Inputs (cloud snapshots; missing required tables abort, no fallback source):
   daily_ohlcv_raw_pit         raw bars + adj_factor + limits + tradestatus + ST (required)
-  daily_basic_full            turnover/pb for new rows and closes for the seam check (required, window snapshot)
+  daily_basic_window          turnover/pb for new rows and closes for the seam check (required, 2026-09-01 on)
   stock_basic_incl_delisted   listing records for new codes (optional)
   index_daily_pit             benchmark extension (optional)
   dividend_tushare            implemented distributions after the cutoff (optional)
@@ -25,9 +25,9 @@ from quantlab import dataset_v5  # noqa: E402
 from quantlab.cloud import CloudError, load_snapshot  # noqa: E402
 
 BASE = ROOT / 'output/account_2025_20260927/extension/dataset/manifest.json'
-REQUIRED = {'daily': ('daily_ohlcv_raw_pit', '20261012'), 'basic': ('daily_basic_full', '20261012w')}
-OPTIONAL = {'stock_basic': ('stock_basic_incl_delisted', '20261012'), 'index_daily': ('index_daily_pit', '20261012'),
-            'dividend': ('dividend_tushare', None)}
+REQUIRED = {'daily': ('daily_ohlcv_raw_pit', 'bundle_20261012'), 'basic': ('daily_basic_window', 'bundle_20261012')}
+OPTIONAL = {'stock_basic': ('stock_basic_incl_delisted', 'bundle_20261012'),
+            'index_daily': ('index_daily_pit', 'bundle_20261012'), 'dividend': ('dividend_tushare', 'bundle_20261012')}
 
 
 def main(argv=None):

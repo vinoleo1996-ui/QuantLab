@@ -29,7 +29,7 @@ def make_base(root):
                                   feature_close=price * 0.5, quality_status='ok', tradestatus=1.0,
                                   listing_session_lower_bound=range(1, len(BASE_DAYS) + 1), is_st_at_open=0.0))
         frame['source'] = pd.Categorical(['baostock'] * len(frame))
-        panels[code] = _write(root, f'panel_{code}', frame.set_index('event_time'), index=True)
+        panels[code] = _write(root, f'panel_{code}', frame.assign(event_time=pd.to_datetime(frame.event_time)).set_index('event_time'), index=True)
     manifest = dict(as_of='2026-09-22', panels=panels, benchmark_id='sh.000300',
                     calendar=_write(root, 'calendar', pd.DataFrame({'session': BASE_DAYS.strftime('%Y-%m-%d')})),
                     instruments=_write(root, 'instruments', pd.DataFrame(dict(instrument_id=list(CODES), active=True))),
@@ -94,7 +94,7 @@ class DatasetV5Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, target = self.build(tmp, make_cloud(suspend_new=True))
             frame, _ = self.read(target, 'sz.000001')
-            row = frame.loc[NEW_DAYS[1].strftime('%Y-%m-%d')]
+            row = frame.loc[NEW_DAYS[1]]
             self.assertEqual(row.tradestatus, 0.0)
             self.assertEqual(row.volume, 0.0)
 
@@ -125,13 +125,13 @@ class DatasetV5Tests(unittest.TestCase):
             target = v5.build(base, self.combined(), end='2026-09-29', overlap=('2026-09-18', '2026-09-22'),
                               version='c', out_root=Path(tmp) / 'out')
             frame, manifest = self.read(target, 'sz.000001')
-            new = frame.loc[NEW_DAYS.strftime('%Y-%m-%d')]
+            new = frame.loc[NEW_DAYS]
             self.assertEqual(new.volume.iloc[0], 1000.0)
             self.assertEqual(new.tradestatus.iloc[1], 0.0)
             self.assertTrue(new.is_st_at_open.eq(1.0).all())
             self.assertEqual(manifest['v5_provenance']['overlap_check']['kind'], 'close_only_daily_basic')
             other, _ = self.read(target, 'sh.600000')
-            self.assertAlmostEqual(other.loc[NEW_DAYS[2].strftime('%Y-%m-%d')].factor, 0.75)
+            self.assertAlmostEqual(other.loc[NEW_DAYS[2]].factor, 0.75)
 
     def test_seam_on_an_ex_date_first_session_uses_pre_close(self):
         cloud = self.combined()
@@ -144,7 +144,8 @@ class DatasetV5Tests(unittest.TestCase):
             target = v5.build(make_base(Path(tmp) / 'base'), cloud, end='2026-09-29',
                               overlap=('2026-09-18', '2026-09-22'), version='e', out_root=Path(tmp) / 'out')
             frame, _ = self.read(target, 'sh.600000')
-            first = frame.loc[NEW_DAYS[0].strftime('%Y-%m-%d')]
+            first = frame.loc[NEW_DAYS[0]]
+            self.assertTrue(pd.api.types.is_datetime64_any_dtype(frame.index))
             self.assertAlmostEqual(first.factor, 0.5 * 4.0 / (4.0 * 5.0 / 10.0))
             self.assertAlmostEqual(first.feature_close / frame.iloc[len(BASE_DAYS) - 1].feature_close, 2.0)
 

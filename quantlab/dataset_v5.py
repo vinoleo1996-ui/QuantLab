@@ -268,10 +268,13 @@ def _append(base_frame, rows):
     """Append rows in the base layout. ``event_time`` stays where the base keeps it (index or column)."""
     addition = pd.DataFrame(rows)
     if base_frame is None:
+        addition['event_time'] = pd.to_datetime(addition['event_time']).astype('datetime64[us]')
         return addition.set_index('event_time')
     indexed = base_frame.index.name == 'event_time'
     if indexed:
         addition = addition.set_index('event_time')
+        if pd.api.types.is_datetime64_any_dtype(base_frame.index):
+            addition.index = pd.DatetimeIndex(pd.to_datetime(addition.index), name='event_time').astype(base_frame.index.dtype)
     addition = addition.reindex(columns=list(base_frame.columns))
     for column in base_frame.columns:
         if isinstance(base_frame[column].dtype, pd.CategoricalDtype):
@@ -287,17 +290,25 @@ def cloud_actions(dividend, start, end, sessions):
     frame['ex'] = _date(frame.ex_date)
     frame = frame[(frame.ex > start) & (frame.ex <= end)]
     rows = []
+
+    def value(row, *names, default=None):
+        for name in names:
+            item = row.get(name)
+            if item is not None and not (isinstance(item, float) and np.isnan(item)):
+                return item
+        return default
+
     for _, row in frame.iterrows():
         code = canon(row.ts_code)
-        notice = _date(pd.Series([row.get('imp_ann_date') or row.get('ann_date')])).iloc[0]
+        notice = _date(pd.Series([value(row, 'imp_ann_date', 'ann_date')])).iloc[0]
         position = sessions.searchsorted(notice, side='right') if pd.notna(notice) else None
         available = sessions[position] if position is not None and position < len(sessions) else pd.NaT
         rows.append(dict(action_id=f'{code}:{row.ex.date()}', instrument_id=code,
                          record_date=str(_date(pd.Series([row.record_date])).iloc[0].date()),
                          ex_date=str(row.ex.date()), pay_date=str(_date(pd.Series([row.pay_date])).iloc[0].date()),
-                         share_date=str(_date(pd.Series([row.get('div_listdate') or row.ex_date])).iloc[0].date()),
-                         cash_per_share=float(row.get('cash_div_tax') or 0.0),
-                         share_ratio=float(row.get('stk_div') or 0.0),
+                         share_date=str(_date(pd.Series([value(row, 'div_listdate', 'ex_date')])).iloc[0].date()),
+                         cash_per_share=float(value(row, 'cash_div_tax', default=0.0)),
+                         share_ratio=float(value(row, 'stk_div', default=0.0)),
                          available_at=available, source='cloud.tushare.dividend', revision='',
                          quality_status='ok' if pd.notna(available) else 'missing_notice_date',
                          tax_policy='gross_cn_individual', action_type='distribution',
@@ -354,7 +365,15 @@ def build(base_manifest, tables, *, end, overlap=('2026-09-01', '2026-09-22'), v
     _write_support(target, 'calendar', calendar.assign(session=calendar.session.dt.strftime('%Y-%m-%d')))
     actions = _read(base_root, manifest['actions'])
     extra = cloud_actions(tables.get('dividend'), cutoff, end, pd.DatetimeIndex(calendar.session))
-    actions = pd.concat([actions, extra.reindex(columns=actions.columns)], ignore_index=True) if not extra.empty else actions
+    if not extra.empty:
+        extra = extra.reindex(columns=actions.columns)
+        for column in actions.columns:
+            if not pd.api.types.is_numeric_dtype(actions[column]) and pd.api.types.is_datetime64_any_dtype(extra[column]):
+                extra[column] = extra[column].dt.strftime('%Y-%m-%d %H:%M:%S')
+        for column in actions.columns:
+            if isinstance(actions[column].dtype, pd.CategoricalDtype):
+                actions[column] = actions[column].astype(object)
+        actions = pd.concat([actions, extra], ignore_index=True)
     _write_support(target, 'actions', actions)
     out = dict(manifest)
     instruments = extend_instruments(_read(base_root, manifest['instruments']), tables.get('stock_basic'), codes)
