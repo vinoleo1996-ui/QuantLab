@@ -29,7 +29,7 @@ from quantlab import p4_alloc as A
 from quantlab.alpha import features as F
 from quantlab.alpha.labels import HORIZON, forward_open_returns
 from quantlab.alpha.models import GBDTEnsemble, LinearICIR, percentile_frame
-from quantlab.alpha.portfolio import random_order, select
+from quantlab.alpha.portfolio import random_order, select, select_hysteresis
 from quantlab.cloud import load_snapshot
 from quantlab.p4_mandate import MANDATE
 from quantlab.smallcap import universe
@@ -90,18 +90,33 @@ def apply_premium_pause(weights, previous, premium):
     return out, paused
 
 
-def require_pass():
-    if not ALLOC.exists() or not json.loads(ALLOC.read_text()).get('passed'):
+BOOKS = ('POOL50', 'GBDT_HYST')
+AUTHORIZATION = ('user 2026-10-13 17:20 CST: paper-record both books although neither passed its gates; '
+                 'observation only, no trading, verdicts unchanged')
+
+
+def require_pass(book=None, authorized=False):
+    """Forward needs a passed allocation layer, or an explicit user authorization for a named book."""
+    passed = ALLOC.exists() and json.loads(ALLOC.read_text()).get('passed')
+    if not passed and not authorized:
         raise SystemExit(json.dumps(dict(status='not_started', reason='P4_ALLOC has not passed')))
-    return json.loads(ALLOC.read_text())
+    report = json.loads(ALLOC.read_text()) if ALLOC.exists() else {}
+    chosen = book or report.get('equity_book')
+    if chosen not in BOOKS:
+        raise SystemExit(json.dumps(dict(status='not_started', reason=f'unknown book {chosen}')))
+    return dict(equity_book=chosen, gates_passed=bool(passed), authorization=None if passed else AUTHORIZATION)
 
 
-def snapshots():
-    return sorted(OUT.glob('snapshot_*.json'))
+def book_dir(book):
+    return OUT / book
 
 
-def stage_snapshot(asof):
-    alloc = require_pass()
+def snapshots(book):
+    return sorted(book_dir(book).glob('snapshot_*.json'))
+
+
+def stage_snapshot(asof, book=None, authorized=False):
+    alloc = require_pass(book, authorized)
     book = alloc['equity_book']
     panel = Panel(latest_version())
     asof = pd.Timestamp(asof)
@@ -113,7 +128,7 @@ def stage_snapshot(asof):
             if not c.startswith('bj.')]
     sectors = F.Industries(load_snapshot('sw_l1_members'))
     industries = sectors.on(asof).reindex(pool).fillna('unclassified').to_dict()
-    previous = json.loads(snapshots()[-1].read_text()) if snapshots() else None
+    previous = json.loads(snapshots(book)[-1].read_text()) if snapshots(book) else None
     held = previous['equity']['names'] if previous else []
     if book == 'POOL50':
         ordered = random_order(pool, 1)
@@ -126,14 +141,14 @@ def stage_snapshot(asof):
         present = json.loads((ALPHA / 'samples_meta.json').read_text())['features']
         position = pd.Series(np.arange(len(panel.sessions)), index=panel.sessions)
         train = samples[(samples.label_known_pos <= position[asof]) & samples.label.notna()]
-        model = (GBDTEnsemble() if book == 'GBDT' else LinearICIR()).fit(train, present)
+        model = GBDTEnsemble().fit(train, present) if book in ('GBDT', 'GBDT_HYST') else LinearICIR().fit(train, present)
         scored = percentile_frame(today, present)
         scored['score'] = model.predict(scored)
         ordered = list(scored.sort_values('score', ascending=False, kind='mergesort').code)
         model_note = dict(model=book, train_rows=len(train), last_label_known=str(panel.sessions[int(train.label_known_pos.max())].date()))
-    names = select(ordered, industries, held)
+    names = (select_hysteresis if book == 'GBDT_HYST' else select)(ordered, industries, held)
     etf, _ = etf_returns_latest(panel.sessions[panel.sessions <= asof])
-    nav_rows = _nav_rows()
+    nav_rows = _nav_rows(book)
     peak = max([1.0] + [r['nav'] for r in nav_rows])
     current = nav_rows[-1]['nav'] if nav_rows else 1.0
     stressed = bool(previous and previous['stressed'])
@@ -146,22 +161,23 @@ def stage_snapshot(asof):
                     equity=dict(book=book, names=names, weight_each=1 / len(names) if names else 0.0, **model_note),
                     sleeves=sleeves, qdii_premium=premium, qdii_paused=paused,
                     stressed=stressed, mandate=MANDATE.version, capital_cny=MANDATE.capital_cny,
+                    gates_passed=alloc['gates_passed'], authorization=alloc['authorization'],
                     promotion_approved=False, forward_decision=False)
-    OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / f'snapshot_{asof.date()}.json').write_text(json.dumps(snapshot, indent=1, ensure_ascii=False))
+    book_dir(book).mkdir(parents=True, exist_ok=True)
+    (book_dir(book) / f'snapshot_{asof.date()}.json').write_text(json.dumps(snapshot, indent=1, ensure_ascii=False))
     print(json.dumps(dict(asof=snapshot['asof'], names=len(names), sleeves=snapshot['sleeves'], stressed=stressed)))
 
 
-def _nav_rows():
-    path = OUT / 'nav.jsonl'
+def _nav_rows(book):
+    path = book_dir(book) / 'nav.jsonl'
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
-def stage_settle(to):
-    require_pass()
-    if not snapshots():
+def stage_settle(to, book=None, authorized=False):
+    book = require_pass(book, authorized)['equity_book']
+    if not snapshots(book):
         raise SystemExit(json.dumps(dict(status='no_snapshot')))
-    snap = json.loads(snapshots()[-1].read_text())
+    snap = json.loads(snapshots(book)[-1].read_text())
     start, to = pd.Timestamp(snap['asof']), pd.Timestamp(to)
     panel = Panel(latest_version())
     if panel.sessions[-1] < to:
@@ -174,16 +190,16 @@ def stage_settle(to):
     etf, _ = etf_returns_latest(pd.DatetimeIndex([start, *window]))
     etf_growth = (1 + etf.iloc[1:]).prod() - 1
     sleeves = snap['sleeves']
-    previous = json.loads(snapshots()[-2].read_text()) if len(snapshots()) > 1 else None
+    previous = json.loads(snapshots(book)[-2].read_text()) if len(snapshots(book)) > 1 else None
     turnover = 1.0 if previous is None else len(set(snap['equity']['names']) - set(previous['equity']['names'])) / 50
     gross = sleeves['equity'] * basket + sum(sleeves[k] * float(etf_growth[k]) for k in A.ETF_CODES)
     cost = sleeves['equity'] * turnover * 2 * EQUITY_TRADE_COST
-    rows = _nav_rows()
+    rows = _nav_rows(book)
     nav = (rows[-1]['nav'] if rows else 1.0) * (1 + gross - cost)
     row = dict(period=[str(start.date()), str(to.date())], status='settled', equity_return=basket,
                etf_returns={k: float(etf_growth[k]) for k in A.ETF_CODES}, gross=gross, cost=cost, nav=nav,
                settled_at=datetime.now(timezone.utc).isoformat(), approximation='close_to_close_estimated_costs')
-    with (OUT / 'nav.jsonl').open('a') as handle:
+    with (book_dir(book) / 'nav.jsonl').open('a') as handle:
         handle.write(json.dumps(row) + '\n')
     print(json.dumps(row))
 
@@ -193,5 +209,10 @@ if __name__ == '__main__':
     parser.add_argument('stage', choices=('snapshot', 'settle'))
     parser.add_argument('--asof')
     parser.add_argument('--to')
+    parser.add_argument('--book', choices=BOOKS)
+    parser.add_argument('--user-authorized', action='store_true')
     args = parser.parse_args()
-    stage_snapshot(args.asof) if args.stage == 'snapshot' else stage_settle(args.to)
+    if args.stage == 'snapshot':
+        stage_snapshot(args.asof, args.book, args.user_authorized)
+    else:
+        stage_settle(args.to, args.book, args.user_authorized)
