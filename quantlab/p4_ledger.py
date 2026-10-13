@@ -32,6 +32,17 @@ def capital(value):
         book.INITIAL_CASH = saved
 
 
+@contextlib.contextmanager
+def exposure(gross):
+    """Run one replay at a different maximum gross; the ledger cash buffer becomes ``1 - gross``."""
+    saved = book.GROSS, book.CASH_BUFFER
+    book.GROSS, book.CASH_BUFFER = float(gross), round(1.0 - float(gross), 10)
+    try:
+        yield
+    finally:
+        book.GROSS, book.CASH_BUFFER = saved
+
+
 def to_targets(schedule):
     """``{date: {code: weight}}`` to replay rows. ``sell`` lists every name ever targeted and not targeted
     now, so a name that failed to sell (limit-down, suspension) is never share-locked."""
@@ -60,8 +71,8 @@ def load_dataset(codes, manifest_path=None):
                          book._dated(read(manifest['benchmark'])), manifest=manifest)
 
 
-def replay(targets, *, start, end, cost_mult=1.0, dataset=None, manifest_path=None, capital_cny=None):
+def replay(targets, *, start, end, cost_mult=1.0, dataset=None, manifest_path=None, capital_cny=None, gross=None):
     codes = sorted({c for row in targets for c in list(row['weights']) + row['sell']})
     dataset = dataset or load_dataset(codes, manifest_path)
-    with capital(capital_cny or MANDATE.capital_cny):
+    with capital(capital_cny or MANDATE.capital_cny), exposure(gross if gross is not None else book.GROSS):
         return book.replay_account(dataset, targets, start=start, end=end, cost_mult=cost_mult)

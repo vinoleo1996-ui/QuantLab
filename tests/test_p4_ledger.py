@@ -13,6 +13,13 @@ class P4LedgerTests(unittest.TestCase):
             raise RuntimeError('boom')
         self.assertEqual(p4_ledger.book.INITIAL_CASH, before)
 
+    def test_exposure_swaps_gross_and_cash_buffer_and_restores(self):
+        self.assertEqual((p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER), (0.90, 0.10))
+        with p4_ledger.exposure(0.97):
+            self.assertEqual(p4_ledger.book.GROSS, 0.97)
+            self.assertAlmostEqual(p4_ledger.book.CASH_BUFFER, 0.03)
+        self.assertEqual((p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER), (0.90, 0.10))
+
     def test_sell_list_keeps_every_previously_targeted_name(self):
         rows = p4_ledger.to_targets({'2024-01-02': {'sh.600000': .5, 'sz.000001': .4},
                                      '2024-02-01': {'sz.000001': .9},

@@ -43,6 +43,7 @@ INPUTS = {
 START, END = pd.Timestamp('2018-01-02'), pd.Timestamp('2026-09-22')
 RECENT_START, RECENT_END = pd.Timestamp('2025-01-02'), pd.Timestamp('2026-09-22')
 GROSS = 0.90
+CASH_BUFFER = 0.10
 LEG_A = GROSS * 0.70
 LEG_B = GROSS * 0.30
 SLEEVES = 5
@@ -499,7 +500,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
     missing = sorted(set(codes) - set(dataset.panels))
     amount = pd.DataFrame({code: dataset.panels[code].amount for code in codes if code in dataset.panels}).reindex(calendar)
     prior_adv = amount.rolling(20, min_periods=20).mean().shift(1)
-    ledger = Ledger(INITIAL_CASH, slippage=0.003, cash_buffer=0.10, participation=0.01,
+    ledger = Ledger(INITIAL_CASH, slippage=0.003, cash_buffer=CASH_BUFFER, participation=0.01,
                     cost_mult=cost_mult, min_trade_value=1000.0, allow_open_assumption=True)
     actions = dataset.actions
     actions_by_date = {}
@@ -560,7 +561,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
             continue
         close_rules = _rules(asof_records(dataset.instruments, decision_time(day)))
         weights, scale = execution_weights(row['weights'], row['active'], row['sell'],
-                                           ledger.quantities(), ledger.marks, ledger.nav())
+                                           ledger.quantities(), ledger.marks, ledger.nav(), gross=GROSS)
         begin = len(ledger.orders)
         ledger.queue_targets(weights, day, 'stable_book_rebalance', close_rules)
         for order in ledger.orders[begin:]:
