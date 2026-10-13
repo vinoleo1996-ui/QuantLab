@@ -34,14 +34,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--end', required=True)
     parser.add_argument('--overlap', nargs=2, default=('2026-09-01', '2026-09-22'))
+    parser.add_argument('--daily-snapshot', help='snapshot id for daily bars, window basics, index and dividends')
     args = parser.parse_args(argv)
     frames, snapshots, missing = {}, {}, []
-    for name, (dataset, snapshot) in {**REQUIRED, **OPTIONAL}.items():
+    sources = {**REQUIRED, **OPTIONAL}
+    if args.daily_snapshot:
+        sources.update(daily=('daily_ohlcv_raw_pit', args.daily_snapshot), basic=('daily_basic_full', args.daily_snapshot),
+                       index_daily=('index_daily_pit', args.daily_snapshot), dividend=('dividend_tushare', args.daily_snapshot))
+    for name, (dataset, snapshot) in sources.items():
         try:
             frames[name] = load_snapshot(dataset, snapshot)
             snapshots[name] = frames[name].attrs['cloud_manifest']
         except CloudError as exc:
-            if name in REQUIRED:
+            if name in REQUIRED or (args.daily_snapshot and name in ('daily', 'basic')):
                 missing.append(f'{name}<-{dataset}:{exc}')
     if missing:
         print(json.dumps(dict(status='blocked_data', missing=missing), ensure_ascii=False, indent=1))

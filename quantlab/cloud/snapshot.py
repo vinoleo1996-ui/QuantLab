@@ -46,7 +46,9 @@ def month_windows(date_min, date_max):
 def plan_segments(entry, segment='auto', start=None, end=None):
     """Full table in one part when small or undated; otherwise monthly windows."""
     lo, hi = start or entry.get('date_min'), end or entry.get('date_max')
-    if segment == 'all' or not entry.get('date_col') or not lo or not hi:
+    if segment == 'all':
+        return [(start, end)] if (start or end) else [(None, None)]
+    if not entry.get('date_col') or not lo or not hi:
         return [(None, None)]
     if segment == 'auto' and start is None and end is None and int(entry.get('nrows') or 0) <= SINGLE_SEGMENT_MAX_ROWS:
         return [(None, None)]
