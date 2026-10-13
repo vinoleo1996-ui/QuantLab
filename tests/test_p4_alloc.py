@@ -36,6 +36,15 @@ class AllocTests(unittest.TestCase):
         self.assertEqual(trace['disaster_triggers'], 1)
         self.assertLess(trace['mean_weights']['equity'], 0.60)
 
+    def test_qdii_above_premium_threshold_cannot_grow(self):
+        flat = pd.DataFrame(0.0, index=DAYS, columns=['gold', 'nasdaq', 'sp500', 'treasury'])
+        premium = pd.DataFrame({'nasdaq': 0.10, 'sp500': 0.0}, index=DAYS)
+        rising = pd.Series(np.linspace(1.0, 3.0, len(DAYS)), index=DAYS)
+        nav, trace = allocate(rising, flat, premium=premium)
+        self.assertGreater(trace['qdii_pauses'], 0)
+        self.assertLess(trace['mean_weights']['nasdaq'], trace['mean_weights']['sp500'])
+        self.assertAlmostEqual(sum(trace['mean_weights'].values()), 1.0, places=3)
+
     def test_rebalance_uses_only_past_returns(self):
         base = etf()
         changed = base.copy()

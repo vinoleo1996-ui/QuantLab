@@ -27,8 +27,29 @@ def target_weights(etf_returns_upto, equity_share):
     return np.concatenate([[equity_share], (1 - equity_share) * etf])
 
 
-def allocate(equity_nav, etf_returns, equity_share=0.60, cost_mult=1.0):
-    """Daily NAV (starting at 1) and a trace. ``etf_returns`` columns are the ETF sleeves, same index."""
+QDII_SLEEVES, PREMIUM_PAUSE = ('nasdaq', 'sp500'), 0.03
+
+
+def pause_qdii(target, current, names, premium_today):
+    """A QDII sleeve whose premium is above the pause threshold may not exceed its current weight;
+    the freed weight goes to treasury (P4_ALLOC amendment 1)."""
+    target = target.copy()
+    paused = []
+    for sleeve in QDII_SLEEVES:
+        if sleeve not in names or premium_today is None:
+            continue
+        value = premium_today.get(sleeve)
+        i = names.index(sleeve)
+        if value is not None and np.isfinite(value) and value > PREMIUM_PAUSE and target[i] > current[i]:
+            target[names.index('treasury')] += target[i] - current[i]
+            target[i] = current[i]
+            paused.append(sleeve)
+    return target, paused
+
+
+def allocate(equity_nav, etf_returns, equity_share=0.60, cost_mult=1.0, premium=None):
+    """Daily NAV (starting at 1) and a trace. ``etf_returns`` columns are the ETF sleeves, same index.
+    ``premium``: optional date x sleeve frame of QDII premium known at each close."""
     sessions = equity_nav.index
     eq = equity_nav.pct_change(fill_method=None).fillna(0.0)
     returns = pd.concat([eq.rename('equity'), etf_returns.reindex(sessions).fillna(0.0)], axis=1)
@@ -36,7 +57,8 @@ def allocate(equity_nav, etf_returns, equity_share=0.60, cost_mult=1.0):
     ends = month_ends(sessions)
     sleeves = target_weights(returns.iloc[:0, 1:], equity_share)
     nav, peak, stressed = 1.0, 1.0, False
-    values, weights, pending, triggers = [], [], None, 0
+    values, weights, pending, triggers, pauses = [], [], None, 0, 0
+    names = list(returns.columns)
     for t, day in enumerate(sessions):
         if pending is not None:
             nav *= 1 - (np.abs(pending - sleeves) * costs).sum()
@@ -56,7 +78,11 @@ def allocate(equity_nav, etf_returns, equity_share=0.60, cost_mult=1.0):
                 stressed = False
             share = DISASTER_EQUITY if stressed else equity_share
             pending = target_weights(returns.iloc[:t + 1, 1:], share)
-    trace = dict(mean_weights=dict(zip(returns.columns, np.mean(weights, axis=0).round(4))), disaster_triggers=triggers)
+            if premium is not None and day in premium.index:
+                pending, paused = pause_qdii(pending, sleeves, names, premium.loc[day].to_dict())
+                pauses += len(paused)
+    trace = dict(mean_weights=dict(zip(returns.columns, np.mean(weights, axis=0).round(4))), disaster_triggers=triggers,
+                 qdii_pauses=pauses)
     return pd.Series(values, index=sessions), trace
 
 

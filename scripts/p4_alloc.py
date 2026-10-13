@@ -34,6 +34,22 @@ def etf_returns(sessions):
     return wide.pct_change(fill_method=None).fillna(0.0)
 
 
+def qdii_premium_frame(sessions):
+    """Premium known at each close: ETF close over the latest unit NAV announced on or before that day."""
+    from quantlab.cloud import load_snapshot
+    nav = load_snapshot('qdii_nav')
+    nav['ann'] = pd.to_datetime(nav['ann_date'].astype(str))
+    bars = load_snapshot('etf_daily_cross_asset')
+    bars['date'] = pd.to_datetime(bars['trade_date'].astype(str))
+    out = {}
+    for sleeve, code in (('nasdaq', '513100.SH'), ('sp500', '513500.SH')):
+        close = bars[bars.ts_code == code].set_index('date')['close'].sort_index()
+        known = nav[nav.ts_code == code].sort_values(['ann', 'nav_date']).groupby('ann')['unit_nav'].last()
+        known = known.reindex(known.index.union(sessions)).ffill().reindex(sessions)
+        out[sleeve] = close.reindex(close.index.union(sessions)).ffill().reindex(sessions) / known - 1
+    return pd.DataFrame(out, index=sessions)
+
+
 def ipo_increment(equity_value_by_day):
     """Expected IPO gain per year over the recent window, as a share of the 800k account."""
     d = IPO.load()
@@ -59,10 +75,11 @@ def main():
         for path in sorted((ALPHA / 'ledger').glob(f'nav_{prefix}*_cost{cost}.csv')):
             equity = pd.read_csv(path, index_col=0, parse_dates=True)['nav'].loc[START:END]
             etf = etf_returns(equity.index)
+            premium = qdii_premium_frame(equity.index)
             for name, share in SHARES.items():
-                nav, trace = A.allocate(equity, etf, share, cost_mult=cost)
+                nav, trace = A.allocate(equity, etf, share, cost_mult=cost, premium=premium)
                 rows.append(dict(path=path.stem, cost=cost, variant=name, **A.stats(nav), **trace['mean_weights'],
-                                 disaster_triggers=trace['disaster_triggers']))
+                                 disaster_triggers=trace['disaster_triggers'], qdii_pauses=trace['qdii_pauses']))
                 if cost == 1 and name == 'ALLOC60':
                     ipo_values.append(ipo_increment(nav * MANDATE.capital_cny * share))
     results = pd.DataFrame(rows)

@@ -43,6 +43,53 @@ FIELDS = ('open', 'high', 'low', 'close', 'adj_close', 'amount', 'turnover', 'fl
           'limit_up', 'is_st')
 
 
+ETF_TS = {'gold': '518880.SH', 'nasdaq': '513100.SH', 'sp500': '513500.SH', 'treasury': '511010.SH'}
+QDII = ('nasdaq', 'sp500')
+
+
+def etf_returns_latest(sessions):
+    """Daily returns of the ETF sleeves from the pushed bundle (close x adj_factor), aligned to ``sessions``."""
+    bars = load_snapshot('etf_daily_cross_asset')
+    bars['date'] = pd.to_datetime(bars['trade_date'].astype(str))
+    bars['hfq'] = bars['close'] * bars['adj_factor']
+    wide = bars.pivot(index='date', columns='ts_code', values='hfq').sort_index()
+    wide = wide[list(ETF_TS.values())].rename(columns={v: k for k, v in ETF_TS.items()})
+    wide = wide.reindex(wide.index.union(sessions)).ffill().reindex(sessions)
+    return wide.pct_change(fill_method=None).fillna(0.0), wide
+
+
+def qdii_premium(day):
+    """Close on ``day`` over the latest unit NAV announced on or before ``day``, minus 1."""
+    nav = load_snapshot('qdii_nav')
+    nav['ann'] = pd.to_datetime(nav['ann_date'].astype(str))
+    bars = load_snapshot('etf_daily_cross_asset')
+    bars['date'] = pd.to_datetime(bars['trade_date'].astype(str))
+    out = {}
+    for sleeve in QDII:
+        code = ETF_TS[sleeve]
+        known = nav[(nav.ts_code == code) & (nav.ann <= day)].sort_values(['nav_date', 'ann'])
+        close = bars[(bars.ts_code == code) & (bars.date <= day)].sort_values('date')
+        out[sleeve] = (float(close.close.iloc[-1] / known.unit_nav.iloc[-1] - 1)
+                       if len(known) and len(close) else None)
+    return out
+
+
+def apply_premium_pause(weights, previous, premium):
+    """QDII sleeves above the pause threshold may not grow; the freed weight goes to treasury."""
+    names = ['equity'] + list(A.ETF_CODES)
+    out = dict(zip(names, map(float, weights)))
+    paused = []
+    for sleeve in QDII:
+        value = premium.get(sleeve)
+        if value is not None and value > MANDATE.qdii_premium_pause and previous is not None:
+            cap = float(previous['sleeves'].get(sleeve, 0.0))
+            if out[sleeve] > cap:
+                out['treasury'] += out[sleeve] - cap
+                out[sleeve] = cap
+                paused.append(sleeve)
+    return out, paused
+
+
 def require_pass():
     if not ALLOC.exists() or not json.loads(ALLOC.read_text()).get('passed'):
         raise SystemExit(json.dumps(dict(status='not_started', reason='P4_ALLOC has not passed')))
@@ -85,7 +132,7 @@ def stage_snapshot(asof):
         ordered = list(scored.sort_values('score', ascending=False, kind='mergesort').code)
         model_note = dict(model=book, train_rows=len(train), last_label_known=str(panel.sessions[int(train.label_known_pos.max())].date()))
     names = select(ordered, industries, held)
-    etf = ALLOC_SCRIPT.etf_returns(panel.sessions[panel.sessions <= asof])
+    etf, _ = etf_returns_latest(panel.sessions[panel.sessions <= asof])
     nav_rows = _nav_rows()
     peak = max([1.0] + [r['nav'] for r in nav_rows])
     current = nav_rows[-1]['nav'] if nav_rows else 1.0
@@ -93,9 +140,11 @@ def stage_snapshot(asof):
     drawdown = 1 - current / peak
     stressed = (drawdown >= A.DISASTER_DD) if not stressed else (drawdown > A.RECOVER_DD)
     weights = A.target_weights(etf, A.DISASTER_EQUITY if stressed else 0.60)
+    premium = qdii_premium(asof)
+    sleeves, paused = apply_premium_pause(weights, previous, premium)
     snapshot = dict(asof=str(asof.date()), created_at=datetime.now(timezone.utc).isoformat(), panel=latest_version(),
                     equity=dict(book=book, names=names, weight_each=1 / len(names) if names else 0.0, **model_note),
-                    sleeves=dict(zip(['equity'] + list(A.ETF_CODES), [float(w) for w in weights])),
+                    sleeves=sleeves, qdii_premium=premium, qdii_paused=paused,
                     stressed=stressed, mandate=MANDATE.version, capital_cny=MANDATE.capital_cny,
                     promotion_approved=False, forward_decision=False)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -122,7 +171,7 @@ def stage_settle(to):
     window = panel.sessions[(panel.sessions > start) & (panel.sessions <= to)]
     adj = panel.field('adj_close')[snap['equity']['names']].loc[[start, *window]]
     basket = float(adj.iloc[-1].div(adj.iloc[0]).fillna(1.0).mean() - 1) if snap['equity']['names'] else 0.0
-    etf = ALLOC_SCRIPT.etf_returns(pd.DatetimeIndex([start, *window]))
+    etf, _ = etf_returns_latest(pd.DatetimeIndex([start, *window]))
     etf_growth = (1 + etf.iloc[1:]).prod() - 1
     sleeves = snap['sleeves']
     previous = json.loads(snapshots()[-2].read_text()) if len(snapshots()) > 1 else None

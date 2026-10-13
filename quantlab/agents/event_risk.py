@@ -27,6 +27,7 @@ Bull note: {bull}"""
 JUDGE = """You judge event risk for A-share {code} on {asof}. Weigh the two notes against the evidence. Conflict alone
 is not a reason to veto; veto only for a concrete, dated event in the evidence that makes a large 20-day loss likely.
 Return JSON only: {{"veto": true|false, "severity": 0-3, "reasons": ["..."], "cited_facts": ["evidence keys"]}}.
+Write every item of "reasons" in Simplified Chinese.
 Evidence: {evidence}
 Bull note: {bull}
 Bear note: {bear}"""
