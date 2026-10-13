@@ -55,7 +55,7 @@ def main(argv=None):
     basic_dates = pd.to_datetime(basic['trade_date']).dt.tz_localize(None).dt.normalize()
     seam = basic[basic_dates <= pd.Timestamp(args.overlap[1])]
     closes = dict(zip(zip(seam['instrument_id'], basic_dates[seam.index]), seam['close']))
-    cloud = dataset_v5.prepare_combined(frames['daily'], basic, overlap_close=closes)
+    cloud = dataset_v5.prepare_combined(frames['daily'], basic, overlap_close=closes, end=args.end)
     cloud.update({k: frames.get(k) for k in OPTIONAL})
     target = dataset_v5.build(BASE, cloud, end=args.end, overlap=tuple(args.overlap), cloud_snapshots=snapshots)
     manifest = json.loads((target / 'manifest.json').read_text())

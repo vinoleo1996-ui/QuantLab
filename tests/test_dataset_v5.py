@@ -149,6 +149,18 @@ class DatasetV5Tests(unittest.TestCase):
             self.assertAlmostEqual(first.factor, 0.5 * 4.0 / (4.0 * 5.0 / 10.0))
             self.assertAlmostEqual(first.feature_close / frame.iloc[len(BASE_DAYS) - 1].feature_close, 2.0)
 
+    def test_collapsed_st_flags_on_a_day_abort_the_build(self):
+        rows = []
+        for i, day in enumerate(NEW_DAYS):
+            for k in range(30):
+                rows.append(dict(instrument_id=f'sz.{k:06d}', trade_date=day, open=1.0, high=1.0, low=1.0, close=1.0,
+                                 pre_close=1.0, volume=1.0, amount=1.0, adj_factor=1.0, limit_up=1.1, limit_down=.9,
+                                 tradestatus=1, volume_unit='share', amount_unit='CNY',
+                                 is_st_at_open=(i < len(NEW_DAYS) - 1)))
+        basic = pd.DataFrame(dict(instrument_id=['sz.000000'], trade_date=[NEW_DAYS[0]], close=[1.0]))
+        with self.assertRaises(v5.BuildError):
+            v5.prepare_combined(pd.DataFrame(rows), basic)
+
     def test_combined_table_refuses_mixed_units_and_bad_seam(self):
         with self.assertRaises(v5.BuildError):
             self.combined(unit='furlong')

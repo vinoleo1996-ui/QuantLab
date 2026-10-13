@@ -97,7 +97,7 @@ def prepare_cloud(tables):
 UNIT_MULT = {'share': 1.0, 'lot': 100.0, 'CNY': 1.0, 'kCNY': 1000.0}
 
 
-def prepare_combined(daily, basic, *, overlap_close=None):
+def prepare_combined(daily, basic, *, overlap_close=None, end=None):
     """Normalize the cloud's single combined bar table (``daily_ohlcv_raw_pit``) plus ``daily_basic_full``.
 
     Units come from the table's own ``volume_unit``/``amount_unit`` columns; a unit outside ``UNIT_MULT``
@@ -111,9 +111,17 @@ def prepare_combined(daily, basic, *, overlap_close=None):
             raise BuildError(f'unknown_or_mixed_{column}:{sorted(units)}')
     frame['code'] = frame['instrument_id'] if 'instrument_id' in frame else frame.ts_code.map(canon)
     frame['date'] = pd.to_datetime(frame['trade_date']).dt.tz_localize(None).dt.normalize()
+    if end is not None:
+        frame = frame[frame['date'] <= pd.Timestamp(end)]
     keyed = frame.set_index(['code', 'date'])
     if keyed.index.duplicated().any():
         raise BuildError('duplicate_daily_rows')
+    st_by_day = keyed['is_st_at_open'].astype(bool).groupby(level='date').sum().sort_index()
+    previous = st_by_day.shift(1)
+    collapsed = st_by_day[(previous >= 20) & (st_by_day < 0.5 * previous)]
+    if len(collapsed):
+        raise BuildError('st_flags_collapsed:' + ','.join(f'{d.date()}={int(n)}/{int(previous[d])}'
+                                                          for d, n in collapsed.items()))
     trading = keyed[keyed['tradestatus'].eq(1) & keyed['close'].notna()]
     suspended = keyed[~keyed.index.isin(trading.index)]
     bars = trading.rename(columns={'volume': 'vol'})[['open', 'high', 'low', 'close', 'pre_close', 'vol', 'amount']]

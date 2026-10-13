@@ -81,8 +81,8 @@ def apply_premium_pause(weights, previous, premium):
     paused = []
     for sleeve in QDII:
         value = premium.get(sleeve)
-        if value is not None and value > MANDATE.qdii_premium_pause and previous is not None:
-            cap = float(previous['sleeves'].get(sleeve, 0.0))
+        if value is not None and value > MANDATE.qdii_premium_pause:
+            cap = float(previous['sleeves'].get(sleeve, 0.0)) if previous is not None else 0.0
             if out[sleeve] > cap:
                 out['treasury'] += out[sleeve] - cap
                 out[sleeve] = cap
