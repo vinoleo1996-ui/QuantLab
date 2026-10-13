@@ -64,15 +64,24 @@ def ipo_increment(equity_value_by_day):
     return float(profit[mask].sum() / years / MANDATE.capital_cny)
 
 
-def main():
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--book-dir', help='folder holding the equity ledgers (default: P4_alpha)')
+    parser.add_argument('--book', help='equity book prefix (default: P4_alpha report equity_book)')
+    parser.add_argument('--tag', default='', help='suffix of the output folder for a new allocation trial')
+    args = parser.parse_args(argv)
+    global OUT
+    OUT = OUT.with_name(OUT.name + args.tag) if args.tag else OUT
+    book_dir = Path(args.book_dir) if args.book_dir else ALPHA
     report_path = ALPHA / 'report.json'
-    if not report_path.exists():
+    if not args.book and not report_path.exists():
         raise SystemExit(json.dumps(dict(status='blocked', reason='P4_alpha not judged yet')))
-    book = json.loads(report_path.read_text())['equity_book']
+    book = args.book or json.loads(report_path.read_text())['equity_book']
     prefix = f'{book}_'
     rows, ipo_values = [], []
     for cost in (1, 2):
-        for path in sorted((ALPHA / 'ledger').glob(f'nav_{prefix}*_cost{cost}.csv')):
+        for path in sorted((book_dir / 'ledger').glob(f'nav_{prefix}p*_cost{cost}.csv')):
             equity = pd.read_csv(path, index_col=0, parse_dates=True)['nav'].loc[START:END]
             etf = etf_returns(equity.index)
             premium = qdii_premium_frame(equity.index)
