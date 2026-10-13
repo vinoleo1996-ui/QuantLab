@@ -75,3 +75,9 @@
 ## 源码
 
 `quantlab/alpha/{features,labels,models,portfolio}.py` 与 `scripts/p4_alpha.py`，运行前提交。
+
+## 更正一（2026-10-13 10:25 CST，正式运行之前追加）
+
+- **财务可用时间。** 云端 `financials_pit` 每一行的 `available_at` 都等于首次公告日（`f_ann_date`），共 422129 行，100% 如此。其中 5594 行的本条公告日（`ann_date`）比它晚，中位数晚 365 天、90 分位晚 378 天，大多是下一年年报里调整过的上年同期数。照原规则读取，会在首次公告时就用上一年后才公布的修订值。现改为：每行的可用时间取 `available_at` 与"`ann_date` 当日 18:00"两者中较晚的一个；同一报告期在同一时刻有多个版本时，取原始版本（`update_flag` 为 0）。74497 个报告期有多个版本，其中 18 个出现可用时间相同而数值不同的情况。代码在 `quantlab/alpha/features.py` 的 `Fundamentals`，测试为 `tests/test_alpha_features.py` 中的两条。
+- **数据来源。** 财务与行业改读用户推送的数据包，登记为快照 `bundle_20261012`（`quantlab/cloud/bundle.py`，逐文件 sha256）。`financials_pit` 为 422129 行，与云端目录一致；`sw_l1_members` 为 7920 行，与之前接口拉取的一致。API 分段拉取的 `financials_pit` 只到 1997 年，不完整，不用。
+- 其余规则、门槛与计数不变。改动在任何账户回放和训练之前做出。

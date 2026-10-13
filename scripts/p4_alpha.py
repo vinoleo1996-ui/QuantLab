@@ -37,7 +37,7 @@ from quantlab.smallcap.panel import Panel
 
 PREREG = 'docs/prereg/P4_ALPHA.md'
 PANEL = '20261006T152412Z'
-SNAPSHOT = '20261012'
+SNAPSHOT = 'bundle_20261012'
 OUT = ROOT / 'output/p4_alpha_20261012'
 SAMPLE_START, ANCHOR, END = '2015-01-05', '2018-01-02', '2026-09-22'
 SUB_START = '2022-01-04'

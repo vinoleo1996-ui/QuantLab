@@ -65,6 +65,26 @@ class FeatureTests(unittest.TestCase):
         self.assertTrue(np.isnan(fundamentals.on(pd.Timestamp('2023-03-30'), ['sh.600000'], close).iloc[0].ep_ttm))
         self.assertAlmostEqual(fundamentals.on(pd.Timestamp('2023-03-31'), ['sh.600000'], close).iloc[0].ep_ttm, 0.1)
 
+    def test_restated_comparative_waits_for_its_own_announcement(self):
+        rows = pd.DataFrame([
+            dict(ts_code='600000.SH', end_date='20221231', ann_date='20230330', f_ann_date='20230330', update_flag='0',
+                 available_at='2023-03-30 18:00:00+08:00', basic_eps=1.0, n_income_attr_p=100.0, revenue=1000.0,
+                 bps=5.0, roe=8.0, grossprofit_margin=30.0, debt_to_assets=40.0, ocf_to_or=0.1),
+            dict(ts_code='600000.SH', end_date='20221231', ann_date='20240328', f_ann_date='20230330', update_flag='0',
+                 available_at='2023-03-30 18:00:00+08:00', basic_eps=0.6, n_income_attr_p=60.0, revenue=900.0,
+                 bps=5.0, roe=5.0, grossprofit_margin=30.0, debt_to_assets=40.0, ocf_to_or=0.1)])
+        fundamentals = Fundamentals(rows)
+        close = pd.Series({'sh.600000': 10.0})
+        self.assertAlmostEqual(fundamentals.on(pd.Timestamp('2023-06-01'), ['sh.600000'], close).iloc[0].ep_ttm, 0.1)
+        self.assertAlmostEqual(fundamentals.on(pd.Timestamp('2024-03-29'), ['sh.600000'], close).iloc[0].ep_ttm, 0.06)
+
+    def test_original_wins_when_versions_share_a_timestamp(self):
+        base = fin_rows().iloc[:1].assign(ann_date='20230330', update_flag='0')
+        revised = base.assign(update_flag='1', basic_eps=0.5)
+        fundamentals = Fundamentals(pd.concat([revised, base], ignore_index=True))
+        close = pd.Series({'sh.600000': 10.0})
+        self.assertAlmostEqual(fundamentals.on(pd.Timestamp('2023-04-03'), ['sh.600000'], close).iloc[0].ep_ttm, 0.1)
+
     def test_industry_membership_respects_out_date(self):
         table = pd.DataFrame(dict(instrument_id=['sh.600000', 'sh.600000', 'sz.000001'],
                                   sw_code=['A', 'B', 'A'], in_date=['20200101', '20230301', '20200101'],

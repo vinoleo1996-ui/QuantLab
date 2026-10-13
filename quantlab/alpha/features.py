@@ -80,11 +80,19 @@ class Fundamentals:
         frame = table.copy()
         frame['code'] = frame['ts_code'].map(code_of) if 'code' not in frame else frame['code']
         frame['available'] = _ts(frame['available_at'])
+        if 'ann_date' in frame:
+            # The cloud stamps every version with the first announcement; a row re-reported in a later
+            # filing is only knowable from its own ann_date (P4_ALPHA amendment 1).
+            own = pd.to_datetime(frame['ann_date'].astype(str), errors='coerce').dt.tz_localize('Asia/Shanghai') \
+                + pd.Timedelta(hours=DECISION_HOUR)
+            frame['available'] = pd.concat([frame['available'], own], axis=1).max(axis=1)
         frame['end'] = pd.to_datetime(frame['end_date'].astype(str)).dt.normalize()
         frame = frame.dropna(subset=['available', 'end'])
         for column in self.COLUMNS:
             frame[column] = pd.to_numeric(frame[column], errors='coerce')
-        self.table = frame.sort_values(['available', 'code', 'end'])
+        frame['revision'] = pd.to_numeric(frame['update_flag'], errors='coerce').fillna(0) if 'update_flag' in frame else 0
+        # Among versions known at the same instant, the original (update_flag 0) is the one kept.
+        self.table = frame.sort_values(['available', 'code', 'end', 'revision'], ascending=[True, True, True, False])
 
     def snapshot(self, day):
         """Latest version of every (code, end_date) known by ``day`` 18:00."""
