@@ -71,6 +71,21 @@ class PortfolioTests(unittest.TestCase):
         self.assertEqual(sum(industries[c] == 'big' for c in chosen), 12)
         self.assertEqual(len(chosen), 50)
 
+    def test_hysteresis_keeps_names_in_top_half_and_enters_only_from_top_decile(self):
+        from quantlab.alpha.portfolio import select_hysteresis
+        ordered = [f's{i}' for i in range(1000)]
+        industries = {c: f'i{i % 20}' for i, c in enumerate(ordered)}
+        current = ['s400', 's499', 's500', 's900']
+        chosen = select_hysteresis(ordered, industries, current, holdings=50)
+        self.assertIn('s400', chosen)
+        self.assertIn('s499', chosen)
+        self.assertNotIn('s500', chosen)
+        self.assertNotIn('s900', chosen)
+        self.assertEqual(len(chosen), 50)
+        self.assertTrue(all(int(c[1:]) < 100 for c in chosen if c not in current))
+        again = select_hysteresis(ordered, industries, chosen, holdings=50)
+        self.assertEqual(set(again), set(chosen))
+
     def test_schedule_is_equal_weight_within_gross(self):
         names = [f's{i}' for i in range(80)]
         out = schedule(['d1'], lambda day: names, lambda day: {c: f'i{k % 8}' for k, c in enumerate(names)})
