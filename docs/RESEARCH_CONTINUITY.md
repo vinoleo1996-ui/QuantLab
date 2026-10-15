@@ -1,6 +1,12 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-15 15:50 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-15 16:24 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 跨域回放包已在 Origin，云端账本尚未启动（2026-10-15 16:24 CST）
+
+用户要求停掉本地回放，改到 cursor.com/agents。本地成本 2 倍没写完的四本是 `DOM_RAND_p10_s2`、`DOM_GBDT_p15`、`DOM_RAND_p15_s1`、`DOM_RAND_p15_s2`。进程已中止，这四本不在云端包里，不能把它们算成已完成。`P4_domain` 的正式中位数仍未判。
+
+跨域试验的代码、预注册、目标持仓和 1217 只行情面板已经推到 Origin 仓库 `leo-vino/QuantLab` 的 `main`，提交 `9c35546ce0bf24017ee79ada2a754ab0cf442fcb`。地址是 `https://origin.cursor.com/leo-vino/QuantLab.git`。回放包在 `replay_data/p4_domain_alloc/`。16GB 行情目录、样本和分数没有上传；目标持仓已经生成，账本不需要它们。这个对话里的云端启动器仍报工作区没有它认识的远端，网页登录停在人机验证，所以 24 条账本还没在云端开跑。`promotion_approved=false`。
 
 ## 分域差在名额，不在别人会不会分域（2026-10-15 15:50 CST，诊断）
 
