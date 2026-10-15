@@ -24,7 +24,7 @@
 
 - 不重训，不重造样本，不改分档数、滞后比例、切点 0.40/0.70、名额 17/17/16。
 - 不接 `quantlab/strategy/allocation.py`，不做市值中性。
-- 不下载 `data/` 下约 16GB 的原始行情。这次账本不读它。
+- 不下载 `data/` 下约 16GB 的原始行情。这次账本不读它。完整行情和历史实验产物在 `https://origin.cursor.com/leo-vino/QuantLab-data.git`，这次回放不要克隆那个仓。
 - 不补写旧试验 `P4_domain` 没完成的四本成本 2 倍：`DOM_RAND_p10_s2`、`DOM_GBDT_p15`、`DOM_RAND_p15_s1`、`DOM_RAND_p15_s2`。它们不在本包里。
 - 不把 `promotion_approved` 改成 true。通过也只表示 `XDOM` 可以成为下一层配比的候选，要另写预注册才能换纸面账。
 - 账户检查失败就停在 `technical_failure`。不要改规则重跑。门槛不过或退回低成交，就记 `no_improvement`，股票账维持 `POOL50`，不要再调进出比例或分档。
