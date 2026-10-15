@@ -1,0 +1,34 @@
+{
+ "gbdt_hyst": {
+  "cagr_cost1": 0.1437818179258595,
+  "cagr_cost2": 0.12160512281690311,
+  "mdd_cost1": -0.33548973391515785,
+  "cagr_2022": 0.15580497680030914,
+  "by_phase": {
+   "GBDT_HYST_p0": 0.1426,
+   "GBDT_HYST_p5": 0.1537,
+   "GBDT_HYST_p10": 0.145,
+   "GBDT_HYST_p15": 0.1404
+  },
+  "nw_t": 0.9526327616700465,
+  "mean_replaced": 0.23390476190476192,
+  "yearly_one_way": 2.9472,
+  "dsr_global": 0.05254636437408272
+ },
+ "pool50": {
+  "cagr_cost1": 0.1211062599313297,
+  "cagr_cost2": 0.10893278714345339,
+  "mdd_cost1": -0.32974554403979817,
+  "cagr_2022": 0.14210202482132928
+ },
+ "gates": {
+  "cagr_minus_pool_ge_2pp": 1.0,
+  "nw_t_ge_2": false,
+  "cost2_above_pool": 1.0,
+  "sub_2022_above_pool": true
+ },
+ "passed": false,
+ "prereg": "docs/prereg/P4_LOWTURN.md",
+ "prereg_sha256": "683deebabfbbcbf752881c275c9e2330a67abfd0bce46ddd97de49ce7ada8643",
+ "promotion_approved": false
+}

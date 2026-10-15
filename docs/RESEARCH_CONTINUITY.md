@@ -1,6 +1,10 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-15 16:24 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-15 16:46 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 云端下一步只跑已登记的 24 本跨域账（2026-10-15 16:46 CST）
+
+交接写在 `docs/CLOUD_HANDOFF.md`。云端克隆 `main` 后按那份文档回放，不重训，不跑 `plans`。已公布的 `POOL50` 对照和低换手报告放在 `replay_data/p4_domain_alloc/reference/`，报告前复制到 `output/` 下脚本原来读取的位置。账本阶段在捆绑包里的 `plans.json` 存在时直接读它。`promotion_approved=false`。
 
 ## 跨域回放包已在 Origin，云端账本尚未启动（2026-10-15 16:24 CST）
 

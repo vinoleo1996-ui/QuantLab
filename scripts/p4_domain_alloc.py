@@ -155,7 +155,10 @@ def stage_ledger(cost_mult, only=None):
     ensure_registered()
     folder = OUT / 'ledger'
     folder.mkdir(parents=True, exist_ok=True)
-    built = load_plans() if (OUT / 'plans.json').exists() else plans()[0]
+    if (BUNDLE / 'plans.json').exists() or (OUT / 'plans.json').exists():
+        built = load_plans()
+    else:
+        built = plans()[0]
     if only:
         missing = [name for name in only if name not in built]
         if missing:
