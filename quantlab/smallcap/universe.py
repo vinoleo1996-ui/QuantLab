@@ -82,6 +82,37 @@ def pool_on(day, features, kind, band='absolute', exclude_st=False, min_history=
     return [code for code in selected.index if adv[code] >= MIN_ADV]
 
 
+# Frozen cuts for the domain trial: shares of the tradable list, most liquid first.
+DOMAIN_LIQUID_END, DOMAIN_MID_END = 0.40, 0.70
+DOMAINS = ('liquid', 'mid', 'micro')
+
+
+def domains_on(day, features, kind='adv', exclude_st=False, min_history=MIN_HISTORY, exclude_prefix='bj.'):
+    """Split the tradable list into three ADV domains. Ineligible names are removed before the cut.
+
+    ``liquid`` is the most liquid ``ceil(0.40 N)`` names, ``mid`` runs through ``ceil(0.70 N)``,
+    and ``micro`` is the remainder. This is not the 3001-5000 band and not the bottom 40 percent.
+    """
+    if kind != 'adv':
+        raise ValueError(kind)
+    adv = features['adv'].loc[day]
+    history = features['history'].loc[day]
+    keep = (history >= min_history) & adv.notna() & (adv >= MIN_ADV)
+    if exclude_st:
+        keep &= ~features['st'].loc[day].reindex(adv.index).eq(1)
+    ordered = adv[keep].sort_values(ascending=False, kind='mergesort')
+    if exclude_prefix:
+        ordered = ordered[~pd.Index(ordered.index.map(str)).str.startswith(exclude_prefix)]
+    empty = {name: [] for name in DOMAINS}
+    n = len(ordered)
+    if n == 0:
+        return empty
+    liquid_end = math.ceil(DOMAIN_LIQUID_END * n)
+    mid_end = math.ceil(DOMAIN_MID_END * n)
+    codes = list(ordered.index)
+    return {'liquid': codes[:liquid_end], 'mid': codes[liquid_end:mid_end], 'micro': codes[mid_end:]}
+
+
 class Financials:
     """As-of lookups on the v4 financial table."""
 

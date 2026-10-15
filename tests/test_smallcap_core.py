@@ -92,6 +92,27 @@ class PoolDefinitions(unittest.TestCase):
         self.assertEqual(len(pool), 98 - 59)
         self.assertEqual(pool[0], codes[60])
 
+    def test_adv_domains_cut_the_tradable_list_into_three_bands(self):
+        day, codes, f = features(100)
+        groups = universe.domains_on(day, f, exclude_st=True, min_history=252)
+        self.assertEqual(groups['liquid'], codes[:40])
+        self.assertEqual(groups['mid'], codes[40:70])
+        self.assertEqual(groups['micro'], codes[70:])
+        self.assertEqual(groups['liquid'][0], codes[0])
+
+    def test_domains_drop_st_and_beijing_before_the_cut(self):
+        day, codes, f = features(100, st={'000010'})
+        f['adv']['bj.430001'] = 1e12
+        f['history']['bj.430001'] = 300
+        f['st']['bj.430001'] = 0.0
+        f['cap']['bj.430001'] = 1e12
+        groups = universe.domains_on(day, f, exclude_st=True, min_history=252)
+        pooled = groups['liquid'] + groups['mid'] + groups['micro']
+        self.assertNotIn('000010', pooled)
+        self.assertNotIn('bj.430001', pooled)
+        self.assertEqual(len(pooled), 99)
+        self.assertEqual(groups['liquid'][0], codes[0])
+
     def test_min_history_is_a_parameter(self):
         day, codes, f = features(100)
         f['history'].iloc[0, 99] = 252

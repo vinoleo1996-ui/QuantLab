@@ -61,8 +61,9 @@ class GBDTEnsemble:
         return pd.concat(gains, axis=1).mean(axis=1).sort_values(ascending=False)
 
 
-def percentile_frame(frame, features):
-    """Per-day percentile of each feature; missing values become 0.5 after ranking."""
+def percentile_frame(frame, features, by='date'):
+    """Percentile of each feature inside ``by``; missing values become 0.5 after ranking."""
     out = frame.copy()
-    out[list(features)] = frame.groupby('date')[list(features)].rank(pct=True).fillna(0.5)
+    keys = [by] if isinstance(by, str) else list(by)
+    out[list(features)] = frame.groupby(keys)[list(features)].rank(pct=True).fillna(0.5)
     return out

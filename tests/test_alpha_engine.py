@@ -61,6 +61,40 @@ class ModelTests(unittest.TestCase):
         self.assertGreater(np.corrcoef(score, test['label'])[0, 1], 0.2)
 
 
+class PercentileTests(unittest.TestCase):
+    def test_percentiles_are_computed_inside_each_domain(self):
+        frame = pd.DataFrame(dict(date=['d'] * 4, domain=['a', 'a', 'b', 'b'], x=[1.0, 2.0, 10.0, 11.0]))
+        out = percentile_frame(frame, ['x'], by=['date', 'domain'])
+        self.assertAlmostEqual(out.x.iloc[0], 0.5)
+        self.assertAlmostEqual(out.x.iloc[1], 1.0)
+        self.assertAlmostEqual(out.x.iloc[2], 0.5)
+        self.assertAlmostEqual(out.x.iloc[3], 1.0)
+
+
+class ExpectedReturnTests(unittest.TestCase):
+    def test_decile_uses_only_that_days_cross_section(self):
+        from quantlab.alpha.expected import assign_decile
+        frame = pd.DataFrame({'date': ['d'] * 10, 'domain': ['micro'] * 10,
+                              'GBDT': list(range(10))})
+        out = assign_decile(frame)
+        self.assertEqual(int(out.loc[out.GBDT == 9, 'decile'].iloc[0]), 9)
+        self.assertLess(int(out.loc[out.GBDT == 0, 'decile'].iloc[0]), 2)
+
+    def test_lagged_mean_ignores_labels_that_are_not_finished(self):
+        from quantlab.alpha.expected import lagged_decile_means
+        daily = pd.DataFrame([
+            dict(domain='micro', decile=9, label_known_pos=10, label_sum=1.0, label_n=1),
+            dict(domain='micro', decile=9, label_known_pos=30, label_sum=100.0, label_n=1),
+        ])
+        early = lagged_decile_means(daily, 10)
+        later = lagged_decile_means(daily, 29)
+        done = lagged_decile_means(daily, 30)
+        self.assertAlmostEqual(float(early.loc[('micro', 9)]), 1.0)
+        self.assertAlmostEqual(float(later.loc[('micro', 9)]), 1.0)
+        self.assertAlmostEqual(float(done.loc[('micro', 9)]), 50.5)
+        self.assertTrue(lagged_decile_means(daily, 9).empty)
+
+
 class PortfolioTests(unittest.TestCase):
     def test_held_names_inside_buffer_are_kept_and_industry_cap_holds(self):
         ordered = [f's{i}' for i in range(200)]
@@ -85,6 +119,36 @@ class PortfolioTests(unittest.TestCase):
         self.assertTrue(all(int(c[1:]) < 100 for c in chosen if c not in current))
         again = select_hysteresis(ordered, industries, chosen, holdings=50)
         self.assertEqual(set(again), set(chosen))
+        counted = select_hysteresis(ordered, industries, current, holdings=50, entry_count=100, exit_count=500)
+        self.assertEqual(counted, chosen)
+
+    def test_hysteresis_counts_follow_the_micro_headcount_not_the_full_list(self):
+        from quantlab.alpha.portfolio import select_hysteresis
+        ordered = [f's{i}' for i in range(1000)]
+        industries = {c: f'i{i % 30}' for i, c in enumerate(ordered)}
+        chosen = select_hysteresis(ordered, industries, current=['s599', 's600', 's700'], holdings=50,
+                                    entry_count=120, exit_count=600)
+        self.assertIn('s599', chosen)
+        self.assertNotIn('s600', chosen)
+        self.assertNotIn('s700', chosen)
+        self.assertTrue(all(int(c[1:]) < 120 for c in chosen if c not in ('s599',)))
+        self.assertEqual(len(chosen), 50)
+        empty = select_hysteresis(ordered, industries, current=['s1'], holdings=50, entry_count=0, exit_count=0)
+        self.assertEqual(empty, [])
+
+    def test_domain_slots_do_not_borrow_and_keep_only_the_buffer(self):
+        from quantlab.alpha.portfolio import select_domain_book
+        orders = {'liquid': [f'L{i}' for i in range(10)], 'mid': [f'D{i}' for i in range(10)],
+                  'micro': [f'S{i}' for i in range(10)]}
+        industries = {code: code for codes in orders.values() for code in codes}
+        for code in orders['liquid']:
+            industries[code] = 'big'
+        slots = (('liquid', 3), ('mid', 2), ('micro', 2))
+        chosen = select_domain_book(orders, industries, current=['L9', 'S0'], slots=slots, buffer_mult=2, cap=1)
+        self.assertEqual([code for code in chosen if code.startswith('L')], ['L0'])
+        self.assertIn('S0', chosen)
+        self.assertNotIn('L9', chosen)
+        self.assertEqual(sum(code.startswith('D') for code in chosen), 2)
 
     def test_schedule_is_equal_weight_within_gross(self):
         names = [f's{i}' for i in range(80)]
