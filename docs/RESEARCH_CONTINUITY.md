@@ -1,8 +1,12 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-15 16:55 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-15 17:05 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
 
-## 研究数据正在单独归档，本地先留着（2026-10-15 16:55 CST）
+## 研究数据正在单独归档，本地先留着（2026-10-15 16:55 CST，17:05 续）
+
+用户要求任务数据都放到云端，本地不再保留。`data/` 约 16GB、`output/` 约 34GB，合计约 15 万个文件。这些不能放进代码仓：云端 Agent 每次都会完整克隆代码仓。
+
+数据仓是 `https://origin.cursor.com/leo-vino/QuantLab-data.git`。Origin 的普通文件上限是 100MiB。112 个更大的文件（约 28GB，含三份 2.8GB 的 `result.pkl` 和分域样本）改走 Git LFS，规则在数据仓的 `.gitattributes`。超过上限的那次提交没有进远端。本地 `data/` 和 `output/` 在远端文件数对上之前不删除。`promotion_approved=false`。
 
 用户要求任务数据都放到云端，本地不再保留。`data/` 约 16GB、`output/` 约 34GB，合计约 15 万个文件，其中有三份 2.8GB 的 `result.pkl`。这些不能放进代码仓：云端 Agent 每次都会完整克隆代码仓，50GB 会让克隆失败。
 
