@@ -1,6 +1,25 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-15 17:05 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-15 17:20 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 架构审视：研究骨架成立，运行时有三套账（2026-10-15 17:20 CST，无新试验）
+
+对照 `quantlab/p4_mandate.py`、`quantlab/p4_ledger.py`、`quantlab/alpha/portfolio.py`、`quantlab/p4_alloc.py`、`scripts/p4_forward.py`、`scripts/stable_book.py`、`docs/STRATEGY.md`、`quantlab/cli.py`。未跑账户，不改规则，不重训，不启动 24 本跨域账。`promotion_approved=false`。
+
+成立的部分：
+
+- 实盘开关停在报告字段。大模型、因子工坊、事件代理没有调用股数账本。
+- P4 股票证据共用 `stable_book.replay_account`。60 万主线、参考账、小盘模拟、ETF 专用回放保持各自引擎，冻结结果不合并。
+- 模型没有跑赢池子之后，股票账退回 `POOL50`。
+
+代码与委托不一致，本轮不修：
+
+- `P4Mandate` 写明是 P4 脚本的唯一约束来源。回放实际只读取本金 80 万。单票 4%、行业权益 25%、股票仓位 50%–70%、十年国债 `511260` 留在委托对象里。选股执行的是行业只数上限 12（`quantlab/alpha/portfolio.py`）。配比只用五年国债 `511010`，股票比例写死 60%，灾难时降到 50%（`quantlab/p4_alloc.py`）。
+- 绩效有三套会计。股数账按开盘、整手、涨跌停和税费记账。配比层把股票净值当外生序列，再叠 ETF。纸面前向 `stage_settle` 用收盘等权，成本按换手估算，记录里标明 `close_to_close_estimated_costs`。11.76% 是配比层的数字。股数账本身不持有这些 ETF。
+- `docs/STRATEGY.md` 仍把 60 万、最多 20 只、P0/P1/P2 写成当前主线。`quantlab/cli.py` 走这条旧线，不走 `p4_ledger`。
+- 数据根有契约清单、云快照、数据集 v5、小盘宽表、OpenQuant 五处。P4 选股读宽表和云端财务，撮合读另一份行情清单。`quantlab/data_os` 没有接到 P4。
+
+这次审视不构成重构授权，也不写成新假设。下一开放问题不变：云端按 `docs/CLOUD_HANDOFF.md` 跑已登记的 24 本跨域账。门槛判定之后，仍由用户决定是否接受约 11.8% 的纸面前向。
 
 ## 研究数据正在单独归档，本地先留着（2026-10-15 16:55 CST，17:05 续）
 
