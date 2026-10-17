@@ -1,6 +1,40 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-15 17:20 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-16 18:16 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 高成交重训的回放已停（2026-10-16 18:16 CST）
+
+`LIQ_HIGH` 15 本里写完 5 本后停掉，不再跑剩下的相位。相位 0、1 的模型年化是 −8.32%、−8.43%，回撤约 −70% 和 −67%，成交约 1.6 万笔。同相位随机账是 1.81%、−3.60%、−1.56%。账户检查通过，没有缺行情。模型比自己的随机账差，按 `docs/prereg/P4_PREMIA.md` 这本账在合并里的权重为 0。正式中位数没有出，不把这次记成已完成的门槛判定。`promotion_approved=false`。
+
+## 三本来源账已预注册，尚未开跑（2026-10-16 16:11 CST）
+
+用户要求按超额重做，并明确要换池、重训，随后要求分域式的来源拆开，而不是全市场一棵模型。预注册 `docs/prereg/P4_PREMIA.md`，sha256 以 `docs/trial_ledger.csv` 里 `P4_premia` 四行所记为准（`e552840aa72227b8…`）。新族试验 2 次：`LIQ_HIGH`、`PREMIA_MIX`。诊断 2 次：`LIQ_HIGH_RAND`、`ASSET_EW`。低成交账复用已公布的 `GBDT_HYST` 相位 0 和 `POOL50` 相位 0 种子 1，不重训，不重跑。全局正式试验计数现为 98。没有跑账户。`promotion_approved=false`。
+
+高成交池是合格股票里成交额最高的 40%，标签是 5 日开盘收益的原始值，每 5 日调仓。合并用过去 60 个交易日的累计收益，为负的来源权重为 0，窗口不搜索。合并账要同时高于 12.11% 和 11.76%，并且相位 0 对 `POOL50` 的 Newey-West t 值不低于 2，才算通过。不过则维持 `POOL50` 与 `ALLOC60`。
+
+## 全仓复核：认同证据缺口，不改已登记试验（2026-10-16 15:17 CST）
+
+对照了 `quantlab/p4_mandate.py`、`quantlab/p4_ledger.py`、`quantlab/p4_alloc.py`、`scripts/p4_alloc.py`、`scripts/p4_forward.py`、`scripts/p4_domain_alloc.py`、`scripts/stable_book.py`、`quantlab/alpha/portfolio.py`、`quantlab/smallcap/universe.py`、`quantlab/report/runs.py`、`quantlab/research_trials.py`、`quantlab/cli.py`、`quantlab/config.py`。没有改选股、成本或预注册，也没有重跑账本。`promotion_approved=false`。
+
+认同的排序：最严重的是 P4 主线产物没有代码、数据和计划的字节锚点。P4 脚本不调用 `quantlab/report/runs.py`。报告锚点是预注册 sha 和写死的 `promotion_approved=False`。`part_*.json` 只有路径、成本倍数、年化、回撤、费用、滑点、成交笔数和账户恒等式是否通过。预注册文本有哈希，输入字节没有。其次是该阻断却只记录：`load_dataset` 丢掉清单里没有的股票，`missing_panels` 不进 P4 报告；`account_checks` 只查恒等式、负现金和提前成交；捆绑包里的 `plans.json` 存在时会忽略本地新计划；对照净值靠手工复制，没有 sha；`research_trials` 先读全表再追加，没有锁，也没有 fsync。
+
+行业上限那句更正成立。`INDUSTRY_CAP=12` 是只数，50 只等权时约等于 24% 权益。持仓少于 50 只时才会按只数上限高出 25% 权益。
+
+需要改口径的事实：
+
+- 被读取的委托字段不是 5 个。`target_net_cagr` 在 `scripts/p4_alloc.py` 写成 `target_15_reached`，不进门槛。运行时没读的是 `max_stocks`、`max_stock_weight`、`max_industry_weight_in_equity`、`equity_weight_bounds`、`etf_universe`、`allowed_assets`、`excluded_assets`、`long_only`、`leverage`。`promotion_approved` 只在测试里读。
+- QDII 暂停是两套。前向读 `MANDATE.qdii_premium_pause`。回放配比用 `quantlab/p4_alloc.py` 自己的 `PREMIUM_PAUSE=0.03`。现在数值相同，改委托不会改回放。
+- 配比和前向写死国债 `511010`。委托里的 `511260` 不在 P4 这条线上。
+- CLI 是 18 个子命令，没有 P4 入口。`docs/STRATEGY.md` 开头仍是 60 万、最多 20 只。
+- `quantlab/portfolio/current.py` 仍读 `output/runs/latest.json`。纸面看板不读它。
+- 股票账本里的 30bp、佣金、印花税扣的是股票成交。`EQUITY_COST=0.004` 扣的是权益袖权重变化，不是同一笔成交再扣一遍。两套口径叠在一个“扣费后”上。
+- 股票账 `GROSS=0.90`，现金不生息。再按 0.60 袖子加权，股票暴露是 54%，袖子里还有 6% 零收益现金。报告里的 `equity` 记的是 0.60。
+- `smallcap/universe.select` 的保留区是 50+100=150，行业槽 15。`stable_book.industry_slots()` 是 `ceil(35*0.15)=6`。
+- `replay_data/p4_domain_alloc/` 留在代码仓，是为了云端账本不用克隆 50GB。这不是和数据归档决定的冲突。
+
+三套计账仍然独立：`replay_account` 是股数账；`allocate` 把股票净值当成外生收益再加权；`stage_settle` 用收盘等权和估算成本。`p4_ledger` 在一次回放期间改 `stable_book` 的模块常量，结束时改回。打新信用是把年均金额直接加到复利年化上，上限 1.5 个百分点。指纹不覆盖 `slippage=0.003`、`participation=0.01`、`min_trade_value=1000`、袖子成本 `0.004/0.0005`。没有 `pyproject`，没有 CI。`data_os` 没有被任何 `scripts/p4_*.py` 引用。
+
+下一件开放的事仍是云端 24 本跨域账和数据仓传完。证据哈希和阻断以后再加，而且不能改已登记试验的选股和成本。
 
 ## 架构审视：研究骨架成立，运行时有三套账（2026-10-15 17:20 CST，无新试验）
 

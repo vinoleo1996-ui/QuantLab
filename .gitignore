@@ -28,3 +28,5 @@ data/smallcap_info/raw/
 data/smallcap_info/*.parquet
 data/smallcap_info/*.log
 qlab_b/
+data/baostock/
+.research/

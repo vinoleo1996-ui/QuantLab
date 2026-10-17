@@ -36,7 +36,7 @@ class LinearICIR:
 class GBDTEnsemble:
     name = 'GBDT'
 
-    def fit(self, train, features, seeds=SEEDS):
+    def fit(self, train, features, seeds=SEEDS, eval_history=None):
         import lightgbm as lgb
         self.features = list(features)
         dates = np.sort(train['date'].unique())
@@ -46,9 +46,18 @@ class GBDTEnsemble:
         for seed in seeds:
             params = dict(GBDT_PARAMS, seed=seed, bagging_seed=seed, feature_fraction_seed=seed,
                           num_threads=8, deterministic=True)
-            booster = lgb.train(params, lgb.Dataset(fit[self.features], fit['label']), GBDT_MAX_ROUNDS,
-                                valid_sets=[lgb.Dataset(valid[self.features], valid['label'])],
-                                callbacks=[lgb.early_stopping(GBDT_PATIENCE, verbose=False)])
+            train_set = lgb.Dataset(fit[self.features], fit['label'])
+            valid_set = lgb.Dataset(valid[self.features], valid['label'])
+            history = {}
+            callbacks = [lgb.early_stopping(GBDT_PATIENCE, verbose=False)]
+            valid_sets, valid_names = [valid_set], ['valid']
+            if eval_history is not None:
+                valid_sets, valid_names = [train_set, valid_set], ['train', 'valid']
+                callbacks.append(lgb.record_evaluation(history))
+            booster = lgb.train(params, train_set, GBDT_MAX_ROUNDS, valid_sets=valid_sets,
+                                valid_names=valid_names, callbacks=callbacks)
+            if eval_history is not None:
+                eval_history.append(history)
             self.boosters.append(booster)
         return self
 
