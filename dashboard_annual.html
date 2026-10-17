@@ -57,13 +57,13 @@ td.best{font-weight:600;color:#fff}
       <h1>QuantLab 年度收益看板</h1>
       <div class="meta">2018-01-02 → 2026-09-22 · 80 万 · 50 只 · 只做多 · 季度再平衡 · 打新按 1.5% 封顶单列</div>
     </div>
-    <div class="badge">样本内回放 · 不是前向承诺</div>
+    <div class="badge">可实现口径（整手 + 真实子账规模）· 样本内回放</div>
   </header>
 
   <section class="kpis">
     <div class="kpi"><div class="lab">基线 ALLOC60（1/vol + 18% 线）</div><div class="val">11.76%</div><div class="sub">10.26% + 打新 1.5 · MDD −19.06%</div></div>
     <div class="kpi"><div class="lab">G0 60/23（恢复 3:3:2 袖）</div><div class="val" style="color:var(--g0)">14.20%</div><div class="sub">12.70% + 1.5 · MDD −19.11%</div></div>
-    <div class="kpi"><div class="lab">G97 65/23（当前最佳）</div><div class="val" style="color:var(--g97)">14.69%</div><div class="sub">13.19% + 1.5 · MDD −22.78%</div></div>
+    <div class="kpi"><div class="lab">可实现 P5_BASE（含打新）</div><div class="val" style="color:var(--g97)">13.92%</div><div class="sub">12.42% + 1.5 · MDD −20.47% · 整手 8 路径</div></div>
     <div class="kpi"><div class="lab">成本 2 倍（G97 65/23）</div><div class="val">13.83%</div><div class="sub">12.33% + 1.5 · 门槛 10%</div></div>
   </section>
 
@@ -116,6 +116,17 @@ td.best{font-weight:600;color:#fff}
     </section>
 
     <section class="card full">
+      <h2>可实现 vs 回测：0.77pp 去哪了</h2>
+      <div class="note">
+        <div class="row"><span class="k">回测纸面</span><span>13.19% / 含打新 14.69% / MDD −22.78%：假设股票可细分、63.05% 暴露。</span></div>
+        <div class="row"><span class="k">可实现</span><span><b>12.42% / 含打新 13.92% / MDD −20.47%</b>：520k 子账 + 整手，8 路径中位，p10–p90 12.12–12.86%。</span></div>
+        <div class="row"><span class="k">差额来源</span><span>子账现金 15.6%（回测 13.2%）+ 4 只高价股一手买不进 → 总股票暴露 55.0%，不是 63.05%。</span></div>
+        <div class="row"><span class="k">成本 2 倍</span><span>11.83% / 含打新 13.33% / MDD −20.90%；60 万本金 12.45%（与 80 万无实质差异）。</span></div>
+        <div class="row"><span class="k">仍然高于旧基线</span><span>ALLOC60 可实现约 10.7–11.0%（含打新 11.76% 同样是纸面），真实提升约 +1.4pp。</span></div>
+      </div>
+    </section>
+
+    <section class="card full">
       <h2>研究台账（本轮已关闭的假设）</h2>
       <div class="note">
         <div class="row"><span class="k">P5_G0</span><span><b>通过</b>：恢复 G0 + 接 G97，13.19% / 含打新 14.69%，MDD −22.78%，三门槛全过。</span></div>
@@ -126,9 +137,9 @@ td.best{font-weight:600;color:#fff}
     </section>
 
     <section class="card full">
-      <h2>稳健性：14.69% 是怎么来的，哪里会打折</h2>
+      <h2>稳健性：12.42%（可实现）/ 13.92%（含打新）是怎么来的，哪里会打折</h2>
       <div class="note">
-        <div class="row"><span class="k">收益来源</span><span>G0 袖把 ETF 部分从 7.5% 拉到 12.70%（黄金 14.49 / 纳指 20.87 / 十年国债 4.17），60% 权重下 +2.4pp；G97 把股票账从 12.11 拉到 12.86，65% 权重下 +0.5pp。</span></div>
+        <div class="row"><span class="k">收益来源</span><span>可实现口径：65% × 12.2%（520k 子账）+ 35% × 12.70%（G0 袖）。G0 袖把 ETF 部分从 7.5% 拉到 12.70%（黄金 14.49 / 纳指 20.87 / 十年国债 4.17），60% 权重下 +2.4pp；G97 把股票账从 12.11 拉到 12.86，65% 权重下 +0.5pp。</span></div>
         <div class="row"><span class="k">2025 权重</span><span>2025 年 +37.1%，占 2018–26 全部对数收益的 <b>31%</b>；剔除 2025 后年化 <b>9.2%</b>。这是最大的单年依赖。</span></div>
         <div class="row"><span class="k">路径离散</span><span>8 条相位/种子路径的 CAGR p10–p90 为 <b>12.71–13.46%</b>；13.19 不是单条幸运路径。</span></div>
         <div class="row"><span class="k">袖的前向</span><span>G0 袖 2014–17 样本外（无金牛）只有 6.95%，2018–26 为 12.70%。袖按 7 / 10 / 12.7 计，组合约 <b>12.7 / 13.8 / 14.7</b>。</span></div>
