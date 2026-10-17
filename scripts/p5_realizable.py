@@ -165,7 +165,7 @@ def main():
                 cagr_p90=float(done.cagr.quantile(0.9)) if len(done) else None,
                 mean_exposure=float(done.mean_exposure.mean()) if len(done) else None,
                 mean_cash=float(done.mean_cash.mean()) if len(done) else None,
-                mean_names=float(done.mean_names.mean()) if len(done) else None)
+                mean_names=None)  # resumed cells carry no per-name metadata; do not aggregate
     (OUT / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=1, default=str))
     print('wrote', OUT / 'report.json')
 
