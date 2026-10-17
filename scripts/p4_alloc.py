@@ -34,20 +34,54 @@ def etf_returns(sessions):
     return wide.pct_change(fill_method=None).fillna(0.0)
 
 
-def qdii_premium_frame(sessions):
-    """Premium known at each close: ETF close over the latest unit NAV announced on or before that day."""
+QDII_SLEEVES, PREMIUM_PAUSE = ('nasdaq', 'sp500'), 0.03
+# A premium outside this band is a data error, never a tradable signal. The adjusted
+# basis below already removes split artifacts; the band only catches residual corruption.
+PREMIUM_VALID_BAND = 0.50
+
+
+def qdii_premium_frame(sessions, basis='adjusted'):
+    """Premium known at each close.
+
+    ``adjusted`` (default) uses ``close * adj_factor / adj_nav`` so price and NAV share one
+    adjustment basis; the Jan-2022 513100 split no longer produces a fake -80% premium.
+    ``legacy`` reproduces the frozen P4/P5 reports (raw ``close / unit_nav``, ±35% mask).
+    Residual corruption outside the band is masked and forward-filled; masked and fallback
+    counts are exposed in ``.attrs``."""
+    if basis not in ('adjusted', 'legacy'):
+        raise ValueError(f'unknown_premium_basis:{basis}')
     from quantlab.cloud import load_snapshot
     nav = load_snapshot('qdii_nav')
     nav['ann'] = pd.to_datetime(nav['ann_date'].astype(str))
     bars = load_snapshot('etf_daily_cross_asset')
     bars['date'] = pd.to_datetime(bars['trade_date'].astype(str))
-    out = {}
+    out, masked, fallback_days = {}, {}, {}
     for sleeve, code in (('nasdaq', '513100.SH'), ('sp500', '513500.SH')):
-        close = bars[bars.ts_code == code].set_index('date')['close'].sort_index()
-        known = nav[nav.ts_code == code].sort_values(['ann', 'nav_date']).groupby('ann')['unit_nav'].last()
+        source = bars[bars.ts_code == code].sort_values('date')
+        close = source.set_index('date')['close']
+        factor = pd.to_numeric(source.set_index('date')['adj_factor'], errors='coerce').fillna(1.0)
+        known = nav[nav.ts_code == code].sort_values(['ann', 'nav_date']).groupby('ann')[
+            ['unit_nav', 'adj_nav']].last()
         known = known.reindex(known.index.union(sessions)).ffill().reindex(sessions)
-        out[sleeve] = close.reindex(close.index.union(sessions)).ffill().reindex(sessions) / known - 1
-    return pd.DataFrame(out, index=sessions)
+        close = close.reindex(close.index.union(sessions)).ffill().reindex(sessions)
+        factor = factor.reindex(factor.index.union(sessions)).ffill().reindex(sessions).fillna(1.0)
+        raw = close / known['unit_nav'].where(known['unit_nav'] > 0) - 1
+        if basis == 'legacy':
+            value, band = raw, 0.35
+            fallback_days[sleeve] = 0
+        else:
+            adjusted = (close * factor) / known['adj_nav'].where(known['adj_nav'] > 0) - 1
+            used_fallback = ~np.isfinite(adjusted) & np.isfinite(raw)
+            fallback_days[sleeve] = int(used_fallback.sum())
+            value, band = adjusted.where(np.isfinite(adjusted), raw), PREMIUM_VALID_BAND
+        bad = (value < -band) | (value > band)
+        masked[sleeve] = int(bad.sum())
+        out[sleeve] = value.mask(bad).ffill().fillna(0.0)
+    frame = pd.DataFrame(out, index=sessions)
+    frame.attrs['masked'] = masked
+    frame.attrs['fallback_days'] = fallback_days
+    frame.attrs['basis'] = basis
+    return frame
 
 
 def ipo_increment(equity_value_by_day):
@@ -84,7 +118,7 @@ def main(argv=None):
         for path in sorted((book_dir / 'ledger').glob(f'nav_{prefix}p*_cost{cost}.csv')):
             equity = pd.read_csv(path, index_col=0, parse_dates=True)['nav'].loc[START:END]
             etf = etf_returns(equity.index)
-            premium = qdii_premium_frame(equity.index)
+            premium = qdii_premium_frame(equity.index, basis='legacy')
             for name, share in SHARES.items():
                 nav, trace = A.allocate(equity, etf, share, cost_mult=cost, premium=premium)
                 rows.append(dict(path=path.stem, cost=cost, variant=name, **A.stats(nav), **trace['mean_weights'],

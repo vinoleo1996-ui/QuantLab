@@ -205,14 +205,7 @@ def stage_settle(to, book=None, authorized=False):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=('snapshot', 'settle'))
-    parser.add_argument('--asof')
-    parser.add_argument('--to')
-    parser.add_argument('--book', choices=BOOKS)
-    parser.add_argument('--user-authorized', action='store_true')
-    args = parser.parse_args()
-    if args.stage == 'snapshot':
-        stage_snapshot(args.asof, args.book, args.user_authorized)
-    else:
-        stage_settle(args.to, args.book, args.user_authorized)
+    raise SystemExit('p4_forward.py is retired for the current line: the P4_ALLOC definition it '
+                     'implements is no longer the baseline. Use '
+                     '`scripts/p5_snapshot.py --as-of YYYY-MM-DD --capital 800000` per '
+                     'docs/prereg/P5_FORWARD.md.')

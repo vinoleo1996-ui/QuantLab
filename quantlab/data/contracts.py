@@ -143,6 +143,7 @@ class MarketDataset:
     evidence_root: Path | None = field(default=None, repr=False)
     industry_records: pd.DataFrame = field(default_factory=pd.DataFrame)
     financials: pd.DataFrame = field(default_factory=pd.DataFrame)
+    delistings: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def __post_init__(self):
         # Dictionary-encoded Parquet dates are storage categories, not ordered
@@ -161,6 +162,7 @@ class MarketDataset:
         extra = {}
         if not self.industry_records.empty: extra["industry_records"] = frame_hash(self.industry_records)
         if not self.financials.empty: extra["financials"] = frame_hash(self.financials)
+        if not self.delistings.empty: extra["delistings"] = frame_hash(self.delistings)
         return fingerprint({"manifest": self.manifest,
                             "panels": {k: frame_hash(v) for k, v in sorted(self.panels.items())},
                             "history": frame_hash(self.instruments), "actions": frame_hash(self.actions),

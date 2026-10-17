@@ -462,7 +462,12 @@ def liquid_ranks(dataset, amount, days, cfg=None):
     return ranks
 
 
-def _rules(records):
+def _rules(records, codes=None):
+    """Build execution rules for ``codes`` only. Building all ~5,500 instruments per day is the
+    replay's dominant cost and the ledger only ever asks for held, pending or target names."""
+    if codes is not None:
+        wanted = [code for code in codes if code in records.index]
+        records = records.loc[wanted]
     result = {}
     for code, row in records.iterrows():
         try:
@@ -474,7 +479,29 @@ def _rules(records):
     return result
 
 
-def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
+def data_quality(snapshots, missing, data_issues, checks_passed, max_stale_days=5):
+    """Summarize whether the replay is usable as evidence, not merely whether it ran."""
+    issues_by_reason = dict(Counter(str(issue.get('reason', 'unknown')) for issue in data_issues))
+    running, longest = {}, {}
+    for state in snapshots:
+        stale = set(state.get('stale') or [])
+        for code in list(running):
+            if code not in stale:
+                running.pop(code)
+        for code in stale:
+            running[code] = running.get(code, 0) + 1
+            longest[code] = max(longest.get(code, 0), running[code])
+    stale_held_max_days = max(longest.values(), default=0)
+    stale_held_codes = {code: int(days) for code, days in longest.items() if days > max_stale_days}
+    unsettled = any(issue.get('reason') == 'delisting_settlement_unverified' for issue in data_issues)
+    return dict(data_issues_by_reason=issues_by_reason, stale_held_max_days=int(stale_held_max_days),
+                stale_held_codes=stale_held_codes,
+                missing_panel_count=len(missing), unsettled_delisting=unsettled,
+                data_quality_ok=bool(checks_passed and not missing and stale_held_max_days <= max_stale_days
+                                     and not unsettled))
+
+
+def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_haircut=0.0):
     if isinstance(targets, (str, Path)):
         payload = json.loads(Path(targets).read_text())
         rows = payload['targets']
@@ -501,7 +528,8 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
     amount = pd.DataFrame({code: dataset.panels[code].amount for code in codes if code in dataset.panels}).reindex(calendar)
     prior_adv = amount.rolling(20, min_periods=20).mean().shift(1)
     ledger = Ledger(INITIAL_CASH, slippage=0.003, cash_buffer=CASH_BUFFER, participation=0.01,
-                    cost_mult=cost_mult, min_trade_value=1000.0, allow_open_assumption=True)
+                    cost_mult=cost_mult, min_trade_value=1000.0, allow_open_assumption=True,
+                    delistings=getattr(dataset, 'delistings', None), delisting_haircut=delisting_haircut)
     actions = dataset.actions
     actions_by_date = {}
     if actions is not None and not actions.empty:
@@ -522,12 +550,11 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
             relevant.update(code for code, weight in row['weights'].items() if weight > 0)
             relevant.update(row['sell'])
         records = asof_records(dataset.instruments, timestamp(day) + pd.Timedelta(hours=9, minutes=25))
-        rules = _rules(records)
+        rules = _rules(records, relevant)
         bars = {code: dataset.panels[code].loc[day].to_dict() for code in relevant
                 if code in dataset.panels and day in dataset.panels[code].index}
-        for gap in gaps_by_date.get(day, []):
-            if ledger.quantity(gap['instrument_id']):
-                ledger.data_issues.append(dict(gap, held_shares=ledger.quantity(gap['instrument_id'])))
+        gap_issues = [dict(gap, held_shares=ledger.quantity(gap['instrument_id']))
+                      for gap in gaps_by_date.get(day, []) if ledger.quantity(gap['instrument_id'])]
         ledger.corporate_actions(day, session, actions_by_date.get(day), calendar)
         adv = prior_adv.loc[day].to_dict() if day in prior_adv.index else {}
 
@@ -556,10 +583,15 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
                     and available is not None and not pd.isna(available)
                     and timestamp(available) <= decision_time(day)):
                 closing[code] = close
+        settled = set(ledger.settle_delistings(day, closing))
+        for issue in gap_issues:
+            if issue['instrument_id'] not in settled:
+                ledger.data_issues.append(issue)
         ledger.close(day, session, closing)
         if row is None:
             continue
-        close_rules = _rules(asof_records(dataset.instruments, decision_time(day)))
+        close_rules = _rules(asof_records(dataset.instruments, decision_time(day)),
+                             set(row['weights']) | set(row['sell']))
         weights, scale = execution_weights(row['weights'], row['active'], row['sell'],
                                            ledger.quantities(), ledger.marks, ledger.nav(), gross=GROSS)
         begin = len(ledger.orders)
@@ -573,6 +605,12 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
                        'orders': len(ledger.orders) - begin})
     snapshots = ledger.snapshots
     nav = pd.Series({pd.Timestamp(state['date']): state['nav'] for state in snapshots}).sort_index()
+    exposure = pd.Series({
+        pd.Timestamp(state['date']): (sum(shares * state['marks'].get(code, 0.0)
+                                          for code, shares in state['quantities'].items()) / state['nav']
+                                      if state['nav'] else 0.0)
+        for state in snapshots
+    }).sort_index()
     returns = nav.pct_change(fill_method=None)
     returns.iloc[0] = nav.iloc[0] / INITIAL_CASH - 1
     elapsed = (nav.index[-1] - nav.index[0]).days
@@ -585,6 +623,8 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
          'marks': state['marks'], 'receivables': state['receivables'], 'payables': 0.0}
         for state in snapshots
     ], 'fills': ledger.fills})
+    quality = data_quality(snapshots, missing, ledger.data_issues, checks['passed'])
+    delisting_fills = [fill for fill in ledger.fills if fill.get('reason') == 'delisting']
     summary = {
         'initial_cash': INITIAL_CASH,
         'final_equity': float(nav.iloc[-1]),
@@ -598,7 +638,13 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
         'slippage': float(sum(fill['slippage_cost'] for fill in ledger.fills)),
         'fills': len(ledger.fills),
         'max_holdings': max((len(state['quantities']) for state in snapshots), default=0),
+        'mean_exposure': float(exposure.mean()),
+        'min_exposure': float(exposure.min()),
+        'max_exposure': float(exposure.max()),
+        'mean_cash_weight': float(1 - exposure.mean()),
         'data_issues': len(ledger.data_issues),
+        **quality,
+        'delisting_liquidations': len(delisting_fills),
         'account_checks_passed': checks['passed'],
         'account_check_errors': checks['errors'],
         'sessions': len(nav),
@@ -608,7 +654,8 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0):
         'promotion_approved': False,
         'missing_panels': missing,
     }
-    result = dict(summary=summary, nav=nav, daily_return=returns, signal_trace=traces, **ledger.export())
+    result = dict(summary=summary, nav=nav, exposure=exposure, daily_return=returns,
+                  signal_trace=traces, **ledger.export())
     return result
 
 

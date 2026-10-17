@@ -22,17 +22,12 @@ ALPHA = ROOT / 'output/p4_alpha_20261012/ledger'
 GROSS = ROOT / 'output/p4_gross_20261013/ledger'
 OUT = ROOT / 'output/p5_g0_20261017'
 
-ORIG_TARGET, ORIG_MONTH = A.target_weights, A.month_ends
+ORIG_TARGET = A.target_weights
 
 
 def g0_target(etf_returns_upto, share):
     s = 1.0 - share
     return np.array([share, 0.375 * s, 0.375 * s, 0.25 * s])
-
-
-def quarter_ends(sessions):
-    s = pd.Series(sessions, index=sessions)
-    return set(s.groupby([sessions.year, (sessions.month - 1) // 3]).max())
 
 
 def etf_g0(sessions):
@@ -55,16 +50,17 @@ def annual(nav):
     return out_r, out_d
 
 
-def run(folder, prefix, share, line, sleeve, cost=1):
-    A.target_weights = g0_target if sleeve == 'g0' else ORIG_TARGET
-    A.month_ends = quarter_ends if sleeve == 'g0' else ORIG_MONTH
+def run(folder, prefix, share, line, sleeve, cost=1, rebalance='quarter'):
     A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY = line, 0.08, 0.5
     rows, navs = [], []
+    target_fn = g0_target if sleeve == 'g0' else ORIG_TARGET
+    overflow = {'gold': 0.5, 'treasury': 0.5} if sleeve == 'g0' else None
     for p in sorted(folder.glob(f'nav_{prefix}p*_cost{cost}.csv')):
         eq = pd.read_csv(p, index_col=0, parse_dates=True)['nav'].loc[START:END]
         etf = etf_g0(eq.index) if sleeve == 'g0' else R.etf_returns(eq.index)
-        prem = R.qdii_premium_frame(eq.index)
-        nav, tr = A.allocate(eq, etf, share, cost_mult=cost, premium=prem)
+        prem = R.qdii_premium_frame(eq.index, basis='legacy')
+        nav, tr = A.allocate(eq, etf, share, cost_mult=cost, premium=prem, rebalance=rebalance,
+                             overflow=overflow, target_fn=target_fn)
         r, d = annual(nav)
         rows.append(dict(path=p.stem, cagr=A.stats(nav)['cagr'], mdd=A.stats(nav)['mdd'],
                          annual=r, annual_mdd=d, triggers=tr['disaster_triggers']))
@@ -108,20 +104,28 @@ def provenance():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--out', default=str(OUT / 'annual_v2.json'))
+    args = parser.parse_args()
     specs = [
-        ('baseline', ALPHA, 'POOL50_', 0.60, 0.18, 'g1'),
-        ('g0_60', ALPHA, 'POOL50_', 0.60, 0.23, 'g0'),
-        ('g97_65', GROSS, 'POOL50_G97_', 0.65, 0.23, 'g0'),
-        ('g97_70', GROSS, 'POOL50_G97_', 0.70, 1.0, 'g0'),
+        ('baseline', ALPHA, 'POOL50_', 0.60, 0.18, 'g1', 'month'),
+        ('g0_60', ALPHA, 'POOL50_', 0.60, 0.23, 'g0', 'quarter'),
+        ('g97_65', GROSS, 'POOL50_G97_', 0.65, 0.23, 'g0', 'quarter'),
+        ('g97_70', GROSS, 'POOL50_G97_', 0.70, 1.0, 'g0', 'quarter'),
     ]
-    data = {'window': [START, END], 'series': {}}
-    for name, folder, prefix, share, line, sleeve in specs:
-        data['series'][name] = run(folder, prefix, share, line, sleeve)
-        print(name, round(data['series'][name]['cagr'] * 100, 2),
+    data = {'window': [START, END], 'premium_basis': 'legacy', 'series': {}}
+    for name, folder, prefix, share, line, sleeve, rebalance in specs:
+        data['series'][name] = run(folder, prefix, share, line, sleeve, rebalance=rebalance)
+        data['series'][name]['rebalance'] = rebalance
+        print(name, data['series'][name]['rebalance'],
+              round(data['series'][name]['cagr'] * 100, 2),
               round(data['series'][name]['mdd'] * 100, 2))
     data['provenance'] = provenance()
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / 'annual.json').write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=1))
     print(json.dumps(data['provenance'], ensure_ascii=False, indent=1))
 
 

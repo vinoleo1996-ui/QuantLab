@@ -75,7 +75,9 @@ def financial_availability(announced_on, sessions):
     return out
 
 
-def _panel_frame(root, entry, code):
+def _panel_frame(root, entry, code, factor_fill='ffill'):
+    if factor_fill not in ('ffill', 'legacy'):
+        raise ValueError(f'unknown_factor_fill:{factor_fill}')
     frame = _read(root, entry)
     frame.index = pd.to_datetime(frame.index).tz_localize(None).normalize() if getattr(frame.index, 'tz', None) else pd.to_datetime(frame.index).normalize()
     frame = frame[~frame.index.duplicated(keep='last')]
@@ -91,7 +93,13 @@ def _panel_frame(root, entry, code):
                  'limit_up', 'limit_down', 'pb_mrq'):
         out[name] = column(name).where(ok)
     out['is_st'] = column('is_st_at_open')
-    factor = column('factor').ffill().bfill()
+    raw_factor = column('factor')
+    lead_missing = raw_factor.isna() & raw_factor.bfill().notna()
+    factor = raw_factor.ffill()
+    if factor_fill == 'legacy':
+        factor = factor.bfill()
+    out.attrs['factor_lead_missing'] = int(lead_missing.sum())
+    out.attrs['factor_fill'] = factor_fill
     out['adj_close'] = out['close'] * factor
     out['float_mktcap'] = float_mktcap(out['close'], out['volume'], out['turnover'])
     if code.startswith('bj.'):
@@ -117,7 +125,7 @@ def _restate_st_limits(code, frame, out):
     return out
 
 
-def build(version=None, source_manifest=SOURCE_MANIFEST, end='2026-09-22'):
+def build(version=None, source_manifest=SOURCE_MANIFEST, end='2026-09-22', factor_fill='ffill'):
     source_manifest = Path(source_manifest)
     root = source_manifest.parent
     manifest = json.loads(source_manifest.read_text())
@@ -131,10 +139,14 @@ def build(version=None, source_manifest=SOURCE_MANIFEST, end='2026-09-22'):
     codes = sorted(manifest['panels'])
     matrices = {name: np.full((len(sessions), len(codes)), np.nan, dtype=np.float32) for name in FIELDS}
     last_bar = {}
+    factor_lead_filled = 0
     for column, code in enumerate(codes):
         if column % 1000 == 0:
             print(json.dumps({'stage': 'panels', 'index': column, 'total': len(codes)}), flush=True)
-        frame = _panel_frame(root, manifest['panels'][code], code).reindex(sessions)
+        frame = _panel_frame(root, manifest['panels'][code], code, factor_fill=factor_fill)
+        if factor_fill == 'legacy':
+            factor_lead_filled += int(frame.attrs.get('factor_lead_missing', 0))
+        frame = frame.reindex(sessions)
         for name in FIELDS:
             matrices[name][:, column] = frame[name].to_numpy(dtype=np.float32)
         traded = frame['close'].dropna()
@@ -175,6 +187,8 @@ def build(version=None, source_manifest=SOURCE_MANIFEST, end='2026-09-22'):
         'financial_rows': int(len(financials)),
         'financial_available_rows': int(financials['available_date'].notna().sum()),
         'delistings': int(len(delisted)),
+        'factor_fill': factor_fill,
+        'factor_lead_filled': factor_lead_filled,
         'promotion_approved': False,
     }
     (target / 'meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2))

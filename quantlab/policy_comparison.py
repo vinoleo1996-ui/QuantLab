@@ -181,7 +181,9 @@ def account_checks(run):
             errors.append('account_identity')
         if state['cash'] < -.001 or any(q < 0 for q in state['quantities'].values()):
             errors.append('negative_cash_or_shares')
-    if any(pd.Timestamp(f['date']) <= pd.Timestamp(f['signal_date']) for f in run.get('fills', [])):
+    # Delisting settlement is an accounting event, not a signal-driven order.
+    if any(pd.Timestamp(f['date']) <= pd.Timestamp(f['signal_date'])
+           for f in run.get('fills', []) if f.get('reason') != 'delisting'):
         errors.append('same_day_or_early_execution')
     return dict(passed=bool(states) and not errors, sessions=len(states), errors=sorted(set(errors)))
 

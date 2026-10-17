@@ -90,8 +90,12 @@ def trade_permission(bar, rule: InstrumentRules, side, date, *, allow_open_assum
 
 
 class Ledger:
-    def __init__(self, cash=600_000.0, slippage=0.003, cash_buffer=0.02, participation=0.01, cost_mult=1.0, min_trade_value=1000., allow_open_assumption=False):
+    def __init__(self, cash=600_000.0, slippage=0.003, cash_buffer=0.02, participation=0.01, cost_mult=1.0, min_trade_value=1000., allow_open_assumption=False, delistings=None, delisting_haircut=0.0):
         self.allow_open_assumption=allow_open_assumption
+        frame = delistings if delistings is not None else pd.DataFrame()
+        self.delistings = ({str(row.code): pd.Timestamp(row.delist_date).normalize()
+                            for row in frame.itertuples()} if len(frame) else {})
+        self.delisting_haircut = float(delisting_haircut)
         self.min_trade_value = min_trade_value
         self.initial_cash = money(cash)
         self.cash = money(cash)
@@ -133,6 +137,43 @@ class Ledger:
         if stale:
             self.data_issues.append({"date": str(date), "reason": f"stale_{field}", "instruments": stale})
         return stale
+
+    def settle_delistings(self, date, prices, haircut=None):
+        """Force-settle held names on/after their delist date at the last valid close.
+
+        This is an accounting settlement, not a market order: no commission, stamp tax or
+        T+1 restriction applies. ``haircut`` is a sensitivity knob (0 = last close)."""
+        day = pd.Timestamp(date).normalize()
+        rate = self.delisting_haircut if haircut is None else float(haircut)
+        settled = []
+        for code in list(self.quantities()):
+            delist_day = self.delistings.get(code)
+            if delist_day is None or day < delist_day:
+                continue
+            quantity = self.quantity(code)
+            px = prices.get(code, np.nan) if prices else np.nan
+            if not np.isfinite(px) or px <= 0:
+                px = self.marks.get(code, np.nan)
+            if not np.isfinite(px) or px <= 0:
+                self.data_issues.append({'date': str(day), 'reason': 'delisting_settlement_unverified',
+                                         'instrument': code, 'delist_date': str(delist_day.date())})
+                continue
+            proceeds = money(quantity * float(px) * (1 - rate))
+            self.cash = money(self.cash + proceeds)
+            self.lots.pop(code, None)
+            self.fills.append({'order_id': f'D{len(self.fills) + 1:08d}', 'instrument_id': code,
+                               'side': 'sell', 'date': str(day), 'quantity': quantity,
+                               'price': float(px), 'notional': proceeds, 'commission': 0.0,
+                               'stamp_tax': 0.0, 'dividend_tax': 0.0, 'fees': 0.0,
+                               'slippage_cost': 0.0, 'signal_date': str(delist_day.date()),
+                               'reason': 'delisting', 'cash_after': self.cash, 'risk_policy': 'none',
+                               'risk_budget': {}, 'candidate': 'delisting',
+                               'execution_basis': 'delisting_last_close', 'haircut': rate})
+            self.events.append({'date': str(day), 'type': 'delisting_liquidation', 'instrument_id': code,
+                                'quantity': quantity, 'price': float(px), 'haircut': rate,
+                                'proceeds': proceeds})
+            settled.append(code)
+        return settled
 
     def close(self, date, session, prices):
         stale = self.mark(date, prices)
@@ -262,7 +303,16 @@ class Ledger:
                 target = math.floor(units) * int(rule.buy_lot)
             if reserved.get(c, 0): target = min(target, projected)
             delta = target - projected
-            if delta == 0: continue
+            if delta == 0:
+                # A positive target that rounds below one board lot is not a zero-weight
+                # decision; record it so lot-driven cash drag stays auditable.
+                if (weights.get(c, 0.0) > 0 and projected == 0 and target == 0
+                        and raw_quantity < rule.buy_lot):
+                    self.events.append(dict(date=str(pd.Timestamp(signal_date).date()),
+                                            type='order_not_submitted', instrument_id=c,
+                                            side='buy', quantity=0,
+                                            reason='below_one_lot', target_quantity=0))
+                continue
             side = "buy" if delta > 0 else "sell"
             qty = abs(int(delta))
             legal = rule.order_quantity(qty, side, holding=projected if side == 'sell' else None)

@@ -66,7 +66,7 @@ def plans():
         industries = lambda day: dict(zip(by_day[day].code, by_day[day].industry))
         for seed in SEEDS:
             plan = schedule(rebalance, lambda day, s=seed: random_order(list(by_day[day].code), s),
-                            industries)
+                            industries, gross=GROSS)
             out[(phase, seed)] = p4_ledger.to_targets(plan)
     return out
 

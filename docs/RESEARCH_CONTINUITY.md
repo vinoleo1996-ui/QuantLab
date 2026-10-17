@@ -1,6 +1,54 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-18 00:45 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-18 00:24 CST（对账补记；下方 00:45 为并行会话自报时间，落盘早于本节）。
+唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 并行会话对账：可实现数字作废，采用修复后 97% 整手账（2026-10-18 00:24 CST）
+
+**结论：两边不是同一件事，也不是数字相加。** 他们的前向计划、模型线判决、80 万口径和行业上限
+可用；他们的 `P5_REALIZABLE` **12.42%/13.92% 不能作为 P5_BASE 的可实现数字**，也不能据此改官方 KPI。
+
+1. **12.42% 无效，三个独立原因**
+   - `scripts/p5_realizable.py:68` 调 `schedule` 未传 `gross=0.97`，用默认 `0.90`
+     （`quantlab/alpha/portfolio.py:9`）。84.37% 子账暴露是 **90% 股票袖**，不是 P5_BASE 的 97% 袖；
+     `stable_book` 只向下约束 `sum(weights) <= GROSS`，不会把 90% 计划放大到 97%。
+   - 矩阵 cell 全为 `rebuilt_from_nav=true`，520k 成本1 的 8 条 NAV 写于 22:24–23:23，
+     跨过 22:32–23:25 的退市/数据质量修复；cell 无 `data_issues`/`delisted_end`，不能证明是修复后账。
+   - `docs/prereg/P5_REALIZABLE.md` 不存在，所谓“预注册四门槛”是事后门槛；ETF 袖仍是分数份额、
+     溢价用 legacy 基准。按治理不能据此改官方数字。
+2. **修复后 97% 整手账是权威对照**（`output/p5_base_lot_20261018/report.json`；袖内整手、
+   袖间再平衡为分数上界）：80 万成本1 **13.57%/−22.08%**、成本2 **12.59%/−22.54%**；
+   60 万 13.34%/12.24；2018–2024 年化 10.78%/9.73%。子账股票暴露 91.77%/89.58%，
+   组合总股票 59.62%/58.19%，ETF 33.58%/33.43%，现金 6.81%/8.39%，19 笔退市清算，缺失 panel 0。
+   - 成本桥（80 万成本1）：名义 13.19% → 股票袖 +0.41pp（修复后 13.48% vs 冻结 12.86%）、
+     ETF 整手 −0.02pp、溢价 0.00、残差 −0.01 → 13.57%。**“回测-实现差 0.77pp 全部来自整手约束”
+     不成立**：修复后的 97% 袖整手账略高于名义，整手损失被退市清算修复抵消。
+   - 但 `data_quality_ok=false`：`sz.000616` 120 日真实停牌；800k 成本2 有 1/8 路径 MDD −25.57%。
+     状态仍 `insufficient_data`，`promotion_approved=false`。
+3. **模型线以 `P5_MATCHED` 为主判**：其为台账 `trial`，结论 `no_improvement`
+   （成本1 +1.85pp、跨路径 NW t=1.03；成本2 +1.01pp、t=1.24；5/9 年为正），模型线已关闭。
+   我们的 `P5_L_HYST_CONTROL` 是诊断稳健性（相位平均 t=1.534、bootstrap p=0.128、换手未匹配
+   0.235 vs 0.118），方向一致，但不作为第二次独立确认、不按结果择优；保留为诊断，不转 `trial`。
+4. **日频线去重**：`scripts/p5_dailyline.py` + `docs/prereg/P5_DAILYLINE.md` 为正式诊断；
+   `scripts/p1_daily_line.py` 是重复实现，结论同为负贡献，不另计试验。
+5. **已落盘更正**：`docs/REVIEW_20261017_ADJUDICATION.md` 追加第七节；`docs/PLAN_20261018.md`
+   追加口径更正。看板若有 13.92 主 KPI，回退为 `insufficient_data`，参考 13.57/12.59（未过数据门槛）。
+   若确需 32 格正式矩阵：先补 `P5_REALIZABLE.md` 预注册，再以 `gross=0.97` + 修复后账本重跑；
+   在此之前以 `output/p5_base_lot_20261018/report.json` 为准。
+6. **保留并入主线**：`AGENTS.md` 的 80 万口径、行业上限由 mandate 权重推导、
+   `P5_MATCHED` 与 `P5_DAILYLINE`、前向快照计划。这些与我们的数据/会计修复互补。
+
+**00:29 更新（对方已收敛，但记录仍未收干净）**：00:26 `scripts/p5_realizable.py:68` 已补
+`gross=GROSS`；00:27 新建 `docs/prereg/P5_REALIZABLE.md`，把 12.42% 标为作废、采用本文的
+13.57/12.59、判 `insufficient_data`——实质结论已经一致。但该文件仍有四处不能直接采信：
+（1）标题写“预注册（2026-10-17）”，实际在 2026-10-18 00:27 结果已知后写成，只能算事后更正；
+（2）`成本2 ≥11.33%`、`总股票暴露 ≥48%` 与 `P5_BASE.md` 的 `成本2+打新≥11.0%`、无暴露门槛不一致；
+（3）表中 p10–p90 与 `output/p5_base_lot_20261018/summary.csv` 复算不符（800k 成本1 实际
+12.85–13.76，不是 13.34–13.66）；
+（4）未进 `docs/trial_ledger.csv`。
+另：`p5_realizable.py` 仍保留 `if nav_csv.exists(): continue`，旧 90% NAV 还在
+`output/p5_realizable_20261017/`；直接重跑不会重算，会复现 12.42%。在这些修完前不重跑、
+不把该文件当有效预注册；以 `output/p5_base_lot_20261018/` 为权威证据。
 
 ## 可实现矩阵收官 + 模型线判决（2026-10-18 00:45 CST）
 

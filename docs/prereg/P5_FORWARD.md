@@ -33,3 +33,13 @@
 - **撤销 23% 灾难线**：实测 8 条路径 0 触发，规则惰性；改为不设事后回撤砍仓。证据 `output/p5_g0_20261017/report.json` 的 `G97_65_noline_q`（13.19% / −22.78% / 成本 2 倍 12.33%，含打新 14.69 / 13.83）。
 - QDII 溢价暂停的溢出额度按 1:1 分给黄金与十年国债——下一版代码实现；当前版全额给国债，差异 <0.1pp。
 - 首次快照 2026-10-30，此后每月末；停止条件不变（6 个月累计落后旧 `ALLOC60` 超过 3pp 记前向反证）。
+
+## 更正二（2026-10-17 22:45 CST，快照管线落地）
+
+- 快照入口改为 `scripts/p5_snapshot.py --as-of YYYY-MM-DD --capital 800000`；旧 `scripts/p4_forward.py` 只服务已撤销的 P4_ALLOC，现于 CLI 显式退出，不再用于 P5_BASE。
+- 快照状态：`output/p5_forward/state.json`；历史：`output/p5_forward/history.csv`；单期：`output/p5_forward/<as_of>/snapshot.json`。`--dry-run` 只写 `output/p5_forward/dryrun/<as_of>/`，不推进状态。
+- 若请求日尚无面板数据，快照截断到最后一个有数据的交易日，并同时记录 `requested_as_of` 与 `as_of`；不得用缺失数据生成订单或收益。
+- 订单执行：下一交易日开盘价 + 30bp 滑点，整手买入、佣金/印花税、现金非负；`status` 只能为 `paper_simulated` 或 `broker_confirmed`。券商成交记录须用 `--holdings/--cash/--broker-confirmed` 导入，与纸面记录分开。
+- 对照 `ALLOC60` 使用冻结的 `output/p4_alpha_20261012/ledger/nav_POOL50_p0_s1_cost1.csv`、60% 股票袖、月度再平衡；配置哈希写入快照，便于复核。
+- 2026-09-22 dry-run 仅用于管线验证（46 只股票订单、2 只 ETF、4 只低于 1 手、QDII 暂停），不作为前向观测；管线测试期间写入的 pre-start 状态已移入 `output/p5_forward/_discarded_dryrun_20261017/`，不代表已开始的记录。
+- 首次真实快照仍为 2026-10-30，若届时数据未更新则记 `blocked`，不伪造。

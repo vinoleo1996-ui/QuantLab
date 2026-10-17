@@ -7,6 +7,7 @@ frozen stable_book users are unaffected.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import sys
@@ -67,12 +68,27 @@ def load_dataset(codes, manifest_path=None):
     calendar = pd.DatetimeIndex(book._dated(read(manifest['calendar'])).session)
     panels = {book.canon(c): book._dated(read(manifest['panels'][book.canon(c)]))
               for c in codes if book.canon(c) in manifest['panels']}
+    # The extension manifest root predates the delistings file; the panel builds
+    # publish it under data/smallcap_v4/<version>/. Fall back to the newest build.
+    delist_path = root / 'delistings.parquet'
+    if not delist_path.exists():
+        candidates = sorted((ROOT / 'data/smallcap_v4').glob('*/delistings.parquet'))
+        delist_path = candidates[-1] if candidates else None
+    if delist_path is not None:
+        delistings = pd.read_parquet(delist_path)
+        delistings.attrs['source'] = str(delist_path.relative_to(ROOT))
+        delistings.attrs['sha256'] = hashlib.sha256(delist_path.read_bytes()).hexdigest()
+    else:
+        delistings = pd.DataFrame()
     return MarketDataset(panels, read(manifest['instruments']), calendar, read(manifest['actions']),
-                         book._dated(read(manifest['benchmark'])), manifest=manifest)
+                         book._dated(read(manifest['benchmark'])), manifest=manifest,
+                         delistings=delistings)
 
 
-def replay(targets, *, start, end, cost_mult=1.0, dataset=None, manifest_path=None, capital_cny=None, gross=None):
+def replay(targets, *, start, end, cost_mult=1.0, dataset=None, manifest_path=None, capital_cny=None, gross=None,
+           delisting_haircut=0.0):
     codes = sorted({c for row in targets for c in list(row['weights']) + row['sell']})
     dataset = dataset or load_dataset(codes, manifest_path)
     with capital(capital_cny or MANDATE.capital_cny), exposure(gross if gross is not None else book.GROSS):
-        return book.replay_account(dataset, targets, start=start, end=end, cost_mult=cost_mult)
+        return book.replay_account(dataset, targets, start=start, end=end, cost_mult=cost_mult,
+                                   delisting_haircut=delisting_haircut)
