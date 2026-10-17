@@ -66,7 +66,7 @@ def plans():
         industries = lambda day: dict(zip(by_day[day].code, by_day[day].industry))
         for seed in SEEDS:
             plan = schedule(rebalance, lambda day, s=seed: random_order(list(by_day[day].code), s),
-                            industries)
+                            industries, gross=GROSS)
             out[(phase, seed)] = p4_ledger.to_targets(plan)
     return out
 
@@ -84,7 +84,7 @@ def equity_stats(result):
 
 def combo(equity_nav, cost, rebalance='quarter'):
     etf = etf_g0(equity_nav.index)
-    premium = R.qdii_premium_frame(equity_nav.index)
+    premium = R.qdii_premium_frame(equity_nav.index, basis='legacy')
     nav, trace = A.allocate(equity_nav, etf, SHARE, cost_mult=cost, premium=premium,
                             rebalance=rebalance, overflow={'gold': 0.5, 'treasury': 0.5},
                             target_fn=g0_target)
@@ -115,6 +115,23 @@ def main():
         for cost in [float(x) for x in args.costs.split(',')]:
             rows = []
             for (phase, seed), targets in sorted(all_plans.items()):
+                nav_csv = OUT / f'nav_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.csv'
+                cell_json = OUT / f'cell_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.json'
+                if nav_csv.exists():
+                    saved = pd.read_csv(nav_csv, index_col=0).iloc[:, 0]
+                    saved.index = pd.to_datetime(saved.index)
+                    st = A.stats(saved)
+                    cell = dict(path=f'p{phase}_s{seed}', cagr=float(st['cagr']), mdd=float(st['mdd']),
+                                equity_cagr=None, mean_exposure=None, mean_cash=None,
+                                mean_names=None, orders=None, data_issues=None,
+                                delisted_end=None, rebuilt_from_nav=True)
+                    if cell_json.exists():
+                        cell.update({k: v for k, v in json.loads(cell_json.read_text()).items()
+                                     if v is not None})
+                    print(json.dumps({'path': cell['path'], 'resumed': True}), flush=True)
+                    rows.append(cell)
+                    report['cells'][f'cap{int(capital)}_cost{cost:g}_{cell["path"]}'] = cell
+                    continue
                 result = p4_ledger.replay(targets, start=START, end=END, cost_mult=cost,
                                            dataset=dataset, capital_cny=capital, gross=GROSS)
                 nav = pd.Series([s['nav'] for s in result['account']],
@@ -134,14 +151,21 @@ def main():
                             delisted_end=delisted_end)
                 rows.append(cell)
                 report['cells'][f'cap{int(capital)}_cost{cost:g}_{cell["path"]}'] = cell
-                pd.Series(c['nav']).to_csv(OUT / f'nav_cap{int(capital)}_cost{cost:g}_{cell["path"]}.csv')
+                pd.Series(c['nav']).to_csv(nav_csv)
+                cell_json.write_text(json.dumps(cell, ensure_ascii=False))
                 print(json.dumps(cell, ensure_ascii=False), flush=True)
+                del result, snaps, nav, c
             frame = pd.DataFrame(rows)
+            done = frame.dropna(subset=['cagr'])
             report['cells'][f'summary_cap{int(capital)}_cost{cost:g}'] = dict(
-                n=len(frame), cagr=float(frame.cagr.median()), mdd=float(frame.mdd.median()),
-                cagr_p10=float(frame.cagr.quantile(0.1)), cagr_p90=float(frame.cagr.quantile(0.9)),
-                mean_exposure=float(frame.mean_exposure.mean()),
-                mean_cash=float(frame.mean_cash.mean()), mean_names=float(frame.mean_names.mean()))
+                n=len(frame), computed=len(done), resumed=int(frame.cagr.isna().sum()),
+                cagr=float(done.cagr.median()) if len(done) else None,
+                mdd=float(done.mdd.median()) if len(done) else None,
+                cagr_p10=float(done.cagr.quantile(0.1)) if len(done) else None,
+                cagr_p90=float(done.cagr.quantile(0.9)) if len(done) else None,
+                mean_exposure=float(done.mean_exposure.mean()) if len(done) else None,
+                mean_cash=float(done.mean_cash.mean()) if len(done) else None,
+                mean_names=None)  # resumed cells carry no per-name metadata; do not aggregate
     (OUT / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=1, default=str))
     print('wrote', OUT / 'report.json')
 
