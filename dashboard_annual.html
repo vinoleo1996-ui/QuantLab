@@ -67,6 +67,13 @@ td.best{font-weight:600;color:#fff}
     <div class="kpi"><div class="lab">成本 2 倍（G97 65/23）</div><div class="val">13.83%</div><div class="sub">12.33% + 1.5 · 门槛 10%</div></div>
   </section>
 
+  <section class="kpis">
+    <div class="kpi"><div class="lab">滚动 12m 胜率</div><div class="val">92%</div><div class="sub">93 个窗口，G97 65/23</div></div>
+    <div class="kpi"><div class="lab">最差滚动 12m</div><div class="val" style="color:var(--green)">−17.2%</div><div class="sub">2018–19 那一段</div></div>
+    <div class="kpi"><div class="lab">滚动 36m 最低 CAGR</div><div class="val">5.4%</div><div class="sub">没有亏损的 36 个月窗口</div></div>
+    <div class="kpi"><div class="lab">2025 占对数收益</div><div class="val" style="color:var(--g0)">31%</div><div class="sub">剔除后年化 9.2%</div></div>
+  </section>
+
   <main class="grid">
     <section class="card full">
       <h2>累计净值</h2>
@@ -97,6 +104,16 @@ td.best{font-weight:600;color:#fff}
       <h2>逐年明细</h2>
       <p class="hint">收益 / 年内最大回撤；粗体为该年最高收益</p>
       <table id="yearTable"></table>
+    </section>
+
+    <section class="card full">
+      <h2>研究台账（本轮已关闭的假设）</h2>
+      <div class="note">
+        <div class="row"><span class="k">P5_G0</span><span><b>通过</b>：恢复 G0 + 接 G97，13.19% / 含打新 14.69%，MDD −22.78%，三门槛全过。</span></div>
+        <div class="row"><span class="k">P5_BASE</span><span><b>已登记</b>：G97 65% + G0 为基线；前向从 2026-10-30 首次快照起记，6 个月落后 3pp 停。</span></div>
+        <div class="row"><span class="k">P5_E</span><span><b>关闭</b>：慢变量尾滤池级 +1.35pp（t=2.05），50 只账本只剩 +0.61（p10–p90 17.07–19.54），低于 +1pp 门槛。</span></div>
+        <div class="row"><span class="k">P5_D</span><span><b>关闭</b>：500 万 → 300 万 ADV 不约束——池子 1597 对 1598 只，只差 1 只；下限远低于相对分位切点。</span></div>
+      </div>
     </section>
 
     <section class="card full">
