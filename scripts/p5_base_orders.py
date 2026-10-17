@@ -144,13 +144,28 @@ def main():
         orders.append({'code': code, 'leg': 'etf', 'side': 'buy', 'shares': shares,
                        'limit': round(price, 3), 'value': round(cost, 2), 'weight': round(w, 4),
                        'participation': None})
+    # cash sweep: residual cash into the 5y treasury ETF (review-3 suggestion, +0.1pp, free)
+    residual = args.capital - cash_needed
+    sweep = None
+    if residual > 5000:
+        price = etf_px('sh511010')
+        if np.isfinite(price) and price > 0:
+            lots = int(np.floor(residual / (price * 100)))
+            if lots > 0:
+                shares = lots * 100
+                cash_needed += shares * price
+                orders.append({'code': 'sh511010', 'leg': 'sweep', 'side': 'buy', 'shares': shares,
+                               'limit': round(price, 3), 'value': round(shares * price, 2),
+                               'weight': round(shares * price / args.capital, 4), 'participation': None})
+                sweep = {'code': 'sh511010', 'shares': shares, 'value': round(shares * price, 2)}
+
     summary = {
         'signal_date': str(day.date()), 'execution_date': str(t.date()),
         'capital': args.capital, 'equity_share': eq_share, 'gross': args.gross, 'seed': args.seed,
         'stock_names': len(codes), 'stock_orders': sum(1 for o in orders if o['leg'] == 'stock'),
         'etf_orders': sum(1 for o in orders if o['leg'] == 'etf'),
         'qdii_paused': paused, 'nasdaq_premium': round(nasdaq_prem, 4),
-        'cash_needed': round(cash_needed, 2), 'skipped': len(skipped), 'skipped_detail': skipped,
+        'cash_needed': round(cash_needed, 2), 'cash_sweep': sweep, 'skipped': len(skipped), 'skipped_detail': skipped,
         'gates': {'cash_ok': cash_needed <= args.capital,
                   'stock_coverage': round(sum(1 for o in orders if o['leg'] == 'stock') / len(codes), 3)},
     }
