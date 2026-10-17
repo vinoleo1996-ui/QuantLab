@@ -1,6 +1,129 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-16 18:16 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+更新时间：2026-10-18 00:45 CST。唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 可实现矩阵收官 + 模型线判决（2026-10-18 00:45 CST）
+
+**1. P5_REALIZABLE 32 格跑完，四门槛全过**：520k 成本1 **12.42%/−20.47%**（p10–p90 12.12–12.86）、
+成本2 11.83%/−20.90%；390k 12.45%/−19.74%、11.73%/−20.24%。含打新 **13.92%**。
+子账现金 15.6%、总股票暴露 55.0%（回测假设 63.05%）。**P5_BASE 保留前向资格，
+但官方数字改为 12.42/13.92，不是 13.19/14.69。** 看板主 KPI 已切换。
+
+**2. P5_MATCHED（模型线生死判据）→ 不通过，模型线关闭**：
+GBDT_HYST 对同 entry/exit 的随机滞后对照，成本1 **+1.85pp/年**，但正确口径
+（每月跨路径平均，n=104）**NW t=1.03**；单路径 t 0.42–1.66。首版脚本池化 8×104 得 t=2.23，
+是虚增样本量的假象，已纠正并写进预注册。成本2 +1.01pp、t=1.24。逐年 5/9 为正，
+集中在 2018/2023/2025（2024 单年 −9.6）。**结论：低换手的 +2.27pp 归给缓冲带规则，
+不是 alpha。** 证据 `output/p5_matched_20261017/`。
+
+
+> 最新补记见下方“P0-2 修复后整手复算与并行会话对账（2026-10-17 23:45 CST）”；
+> 其 P5_REALIZABLE 对账优先于下方“P0 收口”一节。
+
+## P0-2 修复后整手复算与并行会话对账（2026-10-17 23:45 CST）
+
+**结论：整手算术门槛通过，但数据质量门槛失败，P5_BASE 仍为 `insufficient_data`，
+`promotion_approved=false`。**
+
+- 修复后账本（退市清算、数据质量、停牌识别）按真实子账规模重放：80 万成本1 13.5742%/−22.0815%、
+  成本2 12.5854%/−22.5435%；60 万 13.3423%/−21.3594%、12.2391%/−21.8470%；
+  2018–2024 年化 10.78%（80 万成本1）。股票袖均值暴露 91.77%（80 万）/89.58%（60 万），
+  组合总股票 59.62%/58.19%，ETF 33.58%/33.43%，现金 6.81%/8.39%；8 路径共 19 笔退市清算，
+  缺失 panel 0。证据：`output/p5_base_lot_20261018/report.json`、`summary.csv`；
+  `docs/prereg/P5_BASE.md` 更正 2；`docs/trial_ledger.csv` 的
+  `P5_base/G97_65_G0#outcome4`（diagnostic）。
+- 门槛：成本1 ≥13%、MDD ≥−25%、成本2 ≥11%（含/不含打新）全部算术通过；80 万成本2 有
+  1/8 路径 MDD −25.57%，低于 25% 预算（中位 −22.54%）。`data_quality_ok=false`：
+  `sz.000616` 2018-01-24 至 2018-07-24 连续 120 个交易日无报价，是真实停牌；
+  在预注册门槛区分停牌与数据缺口前，状态只能是 `insufficient_data`。
+- **对账**：下方 23:50 节引用的 `P5_REALIZABLE`（84.95% 股票袖暴露、55.2% 总股票、
+  11.66–12.83%）来自 21:58 启动的 `p5_realizable.py` 进程，早于 22:32–23:25 的退市/数据质量
+  修复；其首个完成格仍有 3,779 条数据问题并持有 `sz.002070`，且
+  `docs/prereg/P5_REALIZABLE.md` 不存在。该矩阵不是修复后证据，保留为历史记录，不用于判定。
+  更根本的是，`scripts/p5_realizable.py:68` 调 `schedule` 未传 `gross=0.97`，使用默认 `0.90`
+  （`quantlab/alpha/portfolio.py:9,97`）；其已完成 32 格的 520k 成本1 中位 12.42%、暴露 84.37%
+  是 **90% 股票袖**，不是 P5_BASE 的 97% 股票袖，不能与 13.19% 或本节的 13.57% 对比。
+- **P1-2 审计**（`output/audit_20261017/pool50_summary.json`）：股票暴露均值 86.83%、
+  现金 13.17%、最大行业权重 22.42%、0/2118 天 >25%、3 笔退市清算、647 条数据问题
+  （stale_open 324、stale_close 321、fractional_action 2）、缺失 panel 0、期末 50 只且无退市持仓。
+  最长 stale 为 `sz.000616` 120 日真实停牌，`sh.603315` 79 日、`sh.603667` 67 日等同样需在
+  “停牌 vs 数据缺口”口径下重审，不能直接当作数据缺陷。
+- **P1-3（已完成，`insufficient_data`）**：两组账本各 12/12。GBDT_HYST 成本1/2 中位年化
+  15.75%/13.37%、MDD −38.48%/−38.63%；随机 AR(1) 对照 12.88%/11.41%、MDD −31.60%/−32.08%。
+  相位平均超额 NW t=1.534、block bootstrap p=0.128，四个相位 t 均 <1.96；对照计划替换率
+  0.118 vs 处理 0.235，**不是同换手对照**。数据质量仍为 false（stale 451 日）。
+  结论只能记 `insufficient_data`，不能据此宣称 GBDT alpha；证据
+  `output/p5_l_hyst_control_20261018/report.json`，台账 `P5_l/HYST_CONTROL#outcome1`。
+  `P5_MATCHED` 是同一问题的另一套预注册，尚未运行；完成后只能采用一套，另一套需标
+  `withdrawn` 或注明重复，不能按结果择优。
+- **P1-4（订单清单已跑）**：请求 `--signal-date 2026-09-17` 实际落在 20 日网格的
+  **2026-08-28**（下一开盘 2026-08-31）；50 只目标生成 46 只股票 + 2 只 ETF 订单，
+  4 只 `lot_too_small` + 1 只 QDII 暂停被跳过，48 笔 `pending_next_open`，现金需求
+  704,617 ≤ 800,000，股票覆盖 0.92；`limit_basis` 48 笔均为 `open_buffer`、0 笔
+  `rule_band`，说明该日涨跌停带未约束限价。证据 `output/p1_4_orders_20261018/2026-08-28/`
+  （原 `output/p5_base_orders/2026-08-28/` 被同参数重跑覆盖，新增了 limit/fill 字段）。
+  这只是单日 dry-run，不是成交记录；历史执行审计的 3,098 fills/57 cancelled 不能直接对比。
+- **P1-5（暂不切换）**：修复后 G97_65 成本1 13.57%/−22.08% 仍高于 G0_60 名义 12.70%/−19.11%，
+  但 80 万成本2 有 1/8 路径 MDD −25.57% 越过 25% 预算；G0_60 未做整手重算，不能公平比较。
+  暂保留 G97_65 为研究基线、G0_60 为风险预算备选；任何切换需新预注册和整手 G0_60 账。
+- **P2 预期口径（初稿，未完成）**：修复后全期 13.57% 含 2025 年 +24.96%；2018–2024 只有
+  10.78%（80 万成本1）/9.73%（成本2）。不把 2025 当年化外推；基准区间按成本2 与 ex-2025
+  记 9.5–10.8%，只有 2025 型行情重复才可能回到 13% 以上。15% 目标需要改 mandate
+  （更高敞口或新 alpha），不是当前算法能承诺的。forward 先看 6 个月相对 ALLOC60 是否落后
+  3pp，12 个月按 12%/25%/10% 复核。
+- **验证**：P0/P1 相关 52 个测试全过；`pytest tests` 的 3 个 collection error 是模块导入顺序
+  （`test_reference_challenge` 单独跑 5 passed），另有 8 个已知历史失败（3 个
+  `test_account_2025_review`、3 个 `test_reference_expert_router`、2 个
+  `test_policy_comparison`），本轮未新增。直接运行 `pytest` 会误收集 `output/` 下第三方/冻结
+  源码测试，应用 `pytest tests`。台账 `validate`：0 error、12 corrected、133 trials。
+- **下一开放问题**：追加预注册区分“停牌可持有/不可交易”与“数据缺口”；确认
+  `P5_REALIZABLE` 是否补预注册（否则只能作诊断）；统一两份 matched-control 预注册；
+  P5_H/P5_J 仍 `pending`（实现缺失）；2026-10-30 首次真实 forward 快照。
+
+## P0 收口：可实现性、可复现性、日频回撤线、行业上限（2026-10-17 23:50 CST）
+
+**1. 可实现性（最重要）**：`P5_REALIZABLE` 用生产账本在真实子账规模回放。520k 子账均值股票暴露
+84.95%（现金 15.05%），组合总股票 55.2%，不是回测假设的 63.05%。前 6 条路径 cost1 组合
+11.66–12.83%（中位约 12.4%），cost2 11.5–12.3%；退市末态不止 sz.002070——p0_s2 另持有
+sh.600723/sz.000018、p10_s1 持有 sh.601558/sz.002711。完整 32 格矩阵续跑中
+（`output/p5_realizable_20261017/`，断点续跑：已有 nav 的 cell 跳过）。
+
+**2. 可复现性**：`p4_alloc` 显式 `rebalance='month'|'quarter'`；两频率全矩阵落盘
+`report_v2_month.json` / `report_v2_quarter.json`；决策一致（G97_65_23）。季度 13.19/−22.78、
+月度 13.24/−22.96（成本2 12.32/12.21）。
+
+**3. 日频回撤线（P5_dailyline，关闭）**：日频 23%/8% 年化 12.94%（c1）/11.98%（c2），
+中位 MDD 完全不变（−22.78/−23.20），最差路径只从 −25.60 改善到 −24.80。**负贡献，不采用。**
+
+**4. 行业上限改为按 mandate 权重**：`industry_cap_names()` 由 `0.25×holdings` 推导——
+50 只仍为 12（24%），40 只变 10（旧口径 12 只=30%）。新增 `tests/test_industry_cap.py` 5 条全过；
+两行业池会宁可欠配也不破 25%（与 `select_domain_book` 的空位约定一致）。
+
+**5. 台账**：`python -m quantlab.research_trials validate` → 0 error、12 corrected、132 trials；
+6 行手写 outcome 已追加更正，P5_BASE 的 sha 变更被 warn（因更正 1）。
+
+**6. 本金口径**：AGENTS.md 的"60 万"改为 80 万（2026-10-12 起），历史 60 万结果不重述。
+
+**7. P5_BASE 更正 1**：补记 G97 自身 MDD −35.61%、P4_GROSS 门槛失败、非独立确认、
+可实现口径低于 13.19%、双频率数值。
+
+
+## P0 复核：复现、整手、前向、数据与台账（2026-10-17 22:50 CST）
+
+本轮按已批准计划只做“可复现、可实施、可审计”，不调参、不批准上线。`promotion_approved=false`。
+
+**P0-1 频率与复现已完成。** `quantlab/p4_alloc.py` 增加显式 `rebalance='month'|'quarter'` 与 `quarter_ends`；`scripts/p5_g0_alloc.py` 默认季度、不再 monkeypatch；`scripts/p5_dashboard.py` 同步。季度报告 `output/p5_g0_20261017/report_v2_quarter.json` 复现四个关键数字：G0_60_23_q 12.70%/−19.11%，G97_65_23_q 13.19%/−22.78%，成本 2 倍 12.33%/−23.20%，G97_70_noline_q 13.16%/−24.71%。按预注册决策规则选 `G97_65_23_q`（70/无灾难线未同时在年化和回撤上胜出）。黄金测试 `tests/test_p5_g0_golden.py` 通过。
+
+**P0-4 数据与会计修复已完成主体。** `quantlab/p4_ledger.py` 在扩展清单根目录缺 `delistings.parquet` 时回退到最新 `data/smallcap_v4/*/delistings.parquet`（当前 sha256 `bc6219b7…`），并在 `attrs` 记录来源；`stable_book` 在退市日按最后有效收盘价清算、记录 `delisting_liquidations`，已清算的清单缺口不再重复记为未核实。2019 集成检查 `output/audit_20261017/p0_4_integration.json`：`sz.002070` 期末不再持有、清算 1 笔、`account_checks_passed=true`；但 `stale_held_max_days=10 > 5`，`data_quality_ok=false`，因此该窗口仍不能作为通过证据。缺失 panel、QDII 折算、因子 `ffill`、订单行业 PIT 的单元测试均通过。
+
+**P0-3 Forward 快照管线已完成实现，首期仍待数据。** `scripts/p5_snapshot.py` 为有状态纸面管线：下一交易日开盘成交、整手、费用、现金非负、月末快照、与冻结 `ALLOC60` 的 6 个月比较；`--dry-run` 不推进状态。2026-09-30 请求因面板只到 2026-09-22 而截断，dry-run 输出 46 只股票订单 + 2 只 ETF、4 只低于 1 手、QDII 溢价暂停，和 `p5_base_orders.py` 的 46/50 一致。旧 `scripts/p4_forward.py` 已改为显式退出并指向新入口；`docs/prereg/P5_FORWARD.md` 追加更正二（新 sha256 `7eeee2db…`）；测试期间产生的 pre-start 状态已隔离到 `output/p5_forward/_discarded_dryrun_20261017/`。首次真实快照仍为 2026-10-30，数据未更新则记 `blocked`。
+
+**P0-5 台账治理已完成主体。** `quantlab/research_trials.py` 增加 `families()`，validator 对 `docs/trial_ledger.csv` 返回 0 个未解释错误，共 130 个登记试验（105 个正式、26 个家族）、12 行由追加更正解释；P5_BASE 已标 `diagnostic`、`confirm_uses=0`。`report_v2_quarter.json` 新增 DSR 块：家族口径 0.9936（16 个网格单元、路径 Sharpe 离散度），全局口径 0.5608（105 个正式试验）；旧 0.0044/0.0525 不再作为本结论依据。P5_H/P5_J 保持 `pending`（实现缺失）。
+
+**P0-2 整手可实施重算进行中。** 四个配置（800k/600k × 成本 1/2）已用退市修复后的代码重启，输出 `output/p5_base_lot_20261018/`；尚未完成，不提前给结论。口径冲突仍为：`quantlab/p4_mandate.py` 记 800k（用户 2026-10-12 决定），`AGENTS.md` 记 600k；本轮两者都跑，新实验主口径暂用 800k、600k 作审计对照，未改 `AGENTS.md`。
+
+**下一项开放问题：** 等 P0-2 汇总后按预注册门槛判定；若数据质量仍为 false，只能记 `insufficient_data`，不得写 `passed:true`。之后再做日频灾难线、matched-turnover 对照、执行跟踪与 G0_60/G97_65 取舍（P1）。
+
 
 ## 高成交重训的回放已停（2026-10-16 18:16 CST）
 

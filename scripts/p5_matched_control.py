@@ -68,6 +68,10 @@ def nw_t(series, lag=3):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--costs', default='1,2')
+    args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     plans = random_plans()
     targets = {name: p4_ledger.to_targets(s) for name, s in plans.items()}
@@ -75,7 +79,7 @@ def main():
     dataset = p4_ledger.load_dataset(codes)
     report = {'prereg': 'docs/prereg/P5_MATCHED.md', 'window': [P.ANCHOR, P.END],
               'seeds': list(SEEDS), 'cells': {}, 'promotion_approved': False}
-    for cost in (1, 2):
+    for cost in [float(x) for x in args.costs.split(',')]:
         rows = []
         for name, target in sorted(targets.items()):
             result = p4_ledger.replay(target, start=P.ANCHOR, end=P.END, cost_mult=cost,
@@ -85,8 +89,9 @@ def main():
                                                     for s in result['account']]))
             nav = nav / nav.iloc[0]
             months = nav.resample('ME').last().pct_change().dropna()
+            nav.to_csv(OUT / f'nav_{name}_c{cost:g}.csv')
             cell = dict(path=name, cagr=float(result['summary']['cagr']),
-                        mdd=float(result['summary']['mdd']), orders=len(result['orders']),
+                        mdd=float(result['summary']['max_drawdown']), orders=len(result['orders']),
                         fills=len(result['fills']))
             report['cells'][f'{name}_c{cost}'] = cell
             rows.append((name, cell, months))
@@ -96,7 +101,7 @@ def main():
         diffs, detail = [], {}
         for name, cell, months in rows:
             phase = name.split('_p')[1].split('_')[0]
-            hyst_path = HYST / f'nav_GBDT_HYST_p{phase}_cost{cost}.csv'
+            hyst_path = HYST / f'nav_GBDT_HYST_p{phase}_cost{cost:g}.csv'
             if not hyst_path.exists():
                 continue
             h = pd.read_csv(hyst_path, index_col=0, parse_dates=True)['nav']
@@ -104,17 +109,25 @@ def main():
             hm = h.resample('ME').last().pct_change().dropna()
             joined = pd.concat([hm.rename('hyst'), months.rename('rand')], axis=1).dropna()
             d = joined.hyst - joined.rand
+            d.rename('diff').to_csv(OUT / f'diff_{name}_c{cost:g}.csv', index_label='month')
             diffs.extend(d.tolist())
             detail[name] = dict(hyst_cagr=float((h.iloc[-1]) ** (365.25 / (h.index[-1] - h.index[0]).days) - 1),
                                 rand_cagr=cell['cagr'], mean_monthly_diff=float(d.mean()),
                                 n=len(d))
+        # The 8 paths share the same months, so pooling 8x104 diffs understates the SE.
+        # Average across paths per month first, then run NW t on the 104-point series.
+        matrix = pd.DataFrame({name: months for name, _, months in rows})
+        cross = matrix.mean(axis=1).dropna()
         report['cells'][f'compare_c{cost}'] = dict(
-            mean_monthly_diff=float(np.mean(diffs)) if diffs else None,
-            annualised_diff=float(np.mean(diffs) * 12) if diffs else None,
-            nw_t=nw_t(diffs), n_months=len(diffs), detail=detail)
-        print('compare c%d: ann diff %s, nw_t %s' % (
-            cost, report['cells'][f'compare_c{cost}']['annualised_diff'],
-            report['cells'][f'compare_c{cost}']['nw_t']), flush=True)
+            mean_monthly_diff=float(cross.mean()) if len(cross) else None,
+            annualised_diff=float(cross.mean() * 12) if len(cross) else None,
+            nw_t=nw_t(cross), n_months=len(cross),
+            pooled_nw_t_inflated=nw_t(diffs), pooled_n=diffs.__len__(),
+            detail=detail)
+        cmp_ = report['cells'][f'compare_c{cost}']
+        print('compare c%d: ann diff %.2fpp, NW t=%.2f (cross-path), pooled t would be %.2f (inflated)' % (
+            cost, (cmp_['annualised_diff'] or 0) * 100, cmp_['nw_t'], cmp_['pooled_nw_t_inflated']),
+            flush=True)
     (OUT / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=1, default=float))
     print('wrote', OUT / 'report.json')
 
