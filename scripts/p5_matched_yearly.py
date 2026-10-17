@@ -30,29 +30,34 @@ def yearly(nav):
     return out
 
 
-rows = []
-for path in sorted(RAND.glob('nav_RAND_HYST_p*_c1.csv')):
-    name = path.stem.replace('nav_', '').replace('_c1', '')
-    phase = name.split('_p')[1].split('_')[0]
-    hyst_path = HYST / f'nav_GBDT_HYST_p{phase}_cost1.csv'
-    if not hyst_path.exists():
-        continue
-    r = pd.read_csv(path, index_col=0, parse_dates=True).iloc[:, 0]
-    h = pd.read_csv(hyst_path, index_col=0, parse_dates=True)['nav']
-    ry, hy = yearly(r), yearly(h)
-    for year in sorted(set(ry) & set(hy)):
-        rows.append(dict(path=name, year=year, rand=ry[year], hyst=hy[year],
-                         diff=hy[year] - ry[year]))
-frame = pd.DataFrame(rows)
-frame.to_csv(RAND / 'yearly_diff_c1.csv', index=False)
-pivot = frame.pivot(index='year', columns='path', values='diff')
-print(pivot.round(3).to_string())
-mean_by_year = pivot.mean(axis=1)
-print('\nmean diff by year:')
-print(mean_by_year.round(3).to_string())
-total = mean_by_year.sum()
-print(f'\nsum of yearly mean diffs: {total*100:.2f}pp')
-if total != 0:
-    print(f'largest year share: {mean_by_year.abs().max()/mean_by_year.abs().sum()*100:.1f}% '
-          f'({mean_by_year.abs().idxmax()})')
-print('positive years:', int((mean_by_year > 0).sum()), '/', len(mean_by_year))
+def main():
+    rows = []
+    for path in sorted(RAND.glob('nav_RAND_HYST_p*_c1.csv')):
+        name = path.stem.replace('nav_', '').replace('_c1', '')
+        phase = name.split('_p')[1].split('_')[0]
+        hyst_path = HYST / f'nav_GBDT_HYST_p{phase}_cost1.csv'
+        if not hyst_path.exists():
+            continue
+        r = pd.read_csv(path, index_col=0, parse_dates=True).iloc[:, 0]
+        h = pd.read_csv(hyst_path, index_col=0, parse_dates=True)['nav']
+        ry, hy = yearly(r), yearly(h)
+        for year in sorted(set(ry) & set(hy)):
+            rows.append(dict(path=name, year=year, rand=ry[year], hyst=hy[year],
+                             diff=hy[year] - ry[year]))
+    frame = pd.DataFrame(rows)
+    frame.to_csv(RAND / 'yearly_diff_c1.csv', index=False)
+    pivot = frame.pivot(index='year', columns='path', values='diff')
+    print(pivot.round(3).to_string())
+    mean_by_year = pivot.mean(axis=1)
+    print('\nmean diff by year:')
+    print(mean_by_year.round(3).to_string())
+    total = mean_by_year.sum()
+    print(f'\nsum of yearly mean diffs: {total*100:.2f}pp')
+    if total != 0:
+        print(f'largest year share: {mean_by_year.abs().max()/mean_by_year.abs().sum()*100:.1f}% '
+              f'({mean_by_year.abs().idxmax()})')
+    print('positive years:', int((mean_by_year > 0).sum()), '/', len(mean_by_year))
+
+
+if __name__ == '__main__':
+    main()
