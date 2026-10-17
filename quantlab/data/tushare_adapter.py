@@ -21,13 +21,14 @@ import pandas as pd
 import requests
 
 # ---------------------------------------------------------------------------
-# Credentials (hard-coded per user supply; do not commit to public repos)
+# Credentials — read from environment variables; never hard-code in source.
+# Set DATAHUB_API_KEY and PCD_API_KEY before use.
 # ---------------------------------------------------------------------------
 DATAHUBCO_BASE = "http://datahubco.com/app-api/openapi/v1/tushare"
-DATAHUBCO_KEY = "dba548a206a453c197f9175189b757374fa6db9554bb29e69efea127"
+DATAHUBCO_KEY = os.getenv("DATAHUB_API_KEY", "")
 
 PROMAX_BASE = "https://pcd.mobcvb.cn/tushare/pro"
-PROMAX_KEY = "tsr_1FjRkziz3M7m0aLcTk0ZgnK03__xO3EYq0ZdwQqdwSE"
+PROMAX_KEY = os.getenv("PCD_API_KEY", "")
 
 # Frequency guard for promax (seconds between requests)
 PROMAX_MIN_INTERVAL = 1.0
@@ -42,6 +43,10 @@ class TushareAdapter:
 
     def __init__(self):
         self._last_promax_ts = 0.0
+        if not DATAHUBCO_KEY:
+            raise RuntimeError("DATAHUB_API_KEY environment variable not set")
+        if not PROMAX_KEY:
+            raise RuntimeError("PCD_API_KEY environment variable not set")
 
     # ------------------------------------------------------------------
     # Low-level helpers

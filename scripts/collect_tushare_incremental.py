@@ -25,11 +25,25 @@ OUT_DIR = ROOT / "data/tushare_incremental"
 
 
 def latest_panel_dir() -> Path | None:
-    """Find the most recent panel directory."""
+    """Find the most recent panel directory by actual data date (not directory name)."""
     if not PANEL_DIR.exists():
         return None
-    dirs = sorted([d for d in PANEL_DIR.iterdir() if d.is_dir()])
-    return dirs[-1] if dirs else None
+    best_dir, best_date = None, None
+    for d in PANEL_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        close_path = d / "close.parquet"
+        if not close_path.exists():
+            continue
+        try:
+            df = pd.read_parquet(close_path)
+            last_date = df.index.max()
+            if best_date is None or last_date > best_date:
+                best_date = last_date
+                best_dir = d
+        except Exception:
+            continue
+    return best_dir
 
 
 def existing_calendar(panel_dir: Path) -> pd.DatetimeIndex:
