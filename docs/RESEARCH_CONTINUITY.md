@@ -1,7 +1,44 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-18 16:20 CST（波次 0 正确性收口：B1 季末基准、B2 断供门、M6 参数隔离、M1/M5、M2、M3/M4/N1/N2）。
+更新时间：2026-10-18 18:05 CST（v8 Stage A：PEAD/SUE 与 P6 质量门双阴性、FactorLab 首次真跑、mandate v2 Calmar）。
 唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## v8 Stage A：两个 alpha 赌注双阴性，FactorLab 首跑只留 1 条（2026-10-18 18:05 CST）
+
+**状态：用户批准 v8（收益来源扩展）并拍板：(1) P5_H 记 `no_improvement` + 新假设另立预注册；
+(2) 维持不开可转债；(3) 候选排序改用 Calmar；(4) 10-30 前先跑四项 Stage A。
+三项零账本 Stage A 已完成，两项主赌注均未过门。**
+
+- **mandate v2**：`docs/prereg/MANDATE_V2_CALMAR.md`（sha256 `f1c6fe0d…`）——
+  候选按 Calmar（年化/|MDD|）排序；旧绝对门槛保留为历史、不追溯；新试验必须同时报
+  Calmar、CAGR/MDD、bootstrap 5% 分位 MDD、逐年、ex-2025、换手与成本。
+  **即时后果**：P5_H 19.49%/−41.4% → Calmar 0.47，仍低于 P5_BASE 0.61；
+  G0_60 名义 12.70%/19.11% → Calmar 0.66，在现有候选中最高。Calmar 不救高回撤策略。
+- **PEAD/SUE（`P8_PEAD_SUE`，sha256 `bc20f374…`）——阴性，关闭**：
+  13,844 个高四分位事件、13 个财年、1,401 个配对日。SUE20 年化超额 **+3.97%** 但
+  NW **t=0.435**（p=0.664、BH q=0.664）；SUE60 年化 **−2.63%**、t=−0.578。
+  低惊喜对照并未更弱（20 日 t=0.717）→ 漂移不是惊喜驱动。ex-2025 同号、DSR 为正，
+  但主 t 与 BH 门失败。按预注册关闭，不改 SUE 公式、不换持有期。
+  证据 `output/p8_pead_stage_a_20261018/report.json`；台账 `P8_pead/SUE20|SUE60`。
+  第一次运行因未截断 1990 年代公告（fiscal_years=31）作废，修正事件下界后重跑。
+- **P6 质量硬闸门（`P6_MULTI_CRITERIA_POOL`，sha256 `8f6d57cb…`）——阴性，关闭**：
+  向量化池与 `pool_on` 在 20 个抽样日重叠率 1.000；门覆盖率中位 **51.7%**（p10 43.4%），
+  低于预注册 70% 下限。合规池 20.78%/−32.81%（Calmar 0.633）vs 未加门 20.09%/−33.80%
+  （0.594），配对超额 **+0.42%/年、t=0.434**（p=0.664）。不调 PB/净利阈值。
+  证据 `output/p6_pool_gate_stage_a_20261018/report.json`；台账 `P6_quality_gate/POOL_GATE`。
+- **FactorLab 前向管道首次真跑（`P8_FACTORLAB_FORWARD`，sha256 `21abd63d…`）**：
+  历史筛选（2015–2021 screen / 2022–2026 holdout，20 日非重叠、池内）10 条候选，
+  **5 条过冻结门槛，其中 4 条属已证伪的流动性族**；唯一独立候选
+  `price_momentum_vwap_ratio`（`ts_mean(close,20)/ts_mean(vwap,20)`，screen IC −0.0582、
+  t −5.55、holdout t −3.42、库相关 0.437）。前向流已初始化但 **0 个观测**
+  （可信面板止于 2026-10-12）→ `forward_pending`，未准入、未产生收益。
+  **时点错误已当场修正**：首跑标签用 `open(t)→open(t+20)`，把 close(t) 前的当日收益算进未来，
+  虚增两个反转类候选；改为 `open(t+1)→open(t+21)` 后它们转为不通过。
+  证据 `output/p8_factorlab_forward_20261018/{report.json,screen.csv,forward_state.json}`。
+- **关闭问题**：PEAD 在池内是否有漂移（无）；质量硬门是否改善池（无可区分改善）；
+  10 条 LLM 候选是否全灭（否，1 条独立候选待前向）。
+- **下一开放问题**：P5_H 最终报告与裁定；三项零成本诊断（解禁否决/行业条件反转/权重集中度）；
+  D1–D9 数据线；FactorLab 独立候选的日常前向更新（需要 10-13 之后的真实面板）。
 
 ## 波次 0 收口：会计内核与数据门的三个 BLOCKER/MAJOR 修复（2026-10-18 16:20 CST）
 
