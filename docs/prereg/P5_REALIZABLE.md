@@ -83,9 +83,37 @@ ledger 在停牌期间按最后标记持仓，无法卖出。当前预注册门�
 
 ---
 
+## 记录更正 2（2026-10-18，事后口径与门槛收紧）
+
+- **本文档不是预注册**：`P5_REALIZABLE.md` 是 2026-10-17 事后记录，不是事前预注册文件。
+  32 格矩阵（`output/p5_realizable_20261017/`）整体标记为 `withdrawn`，因其在数据质量修复前运行、
+  `gross` 未传递（默认 0.90 而非 0.97），且与 P5_BASE/P5_G0 不可比。
+- **权威证据已迁移**：冻结后整手账权威数字改为 `output/p5_base_lot_20261018/report.json`
+  及 `summary.csv`，不再引用 `output/p5_realizable_20261017/`。
+- **门槛回到 P5_BASE 原文**：本文档第 16–21 行自造的"成本 2 倍 ≥ 11.33%"和"总股票暴露 ≥ 48%"
+  不是 P5_BASE 预注册门槛，予以删除/作废。
+  正确门槛见 `docs/prereg/P5_BASE.md:23-27`：
+  1. 成本 1 倍：组合年化中位数 + 打新 ≥ 13.0%；
+  2. 组合最大回撤中位数不差于 −25%；
+  3. 成本 2 倍：组合年化中位数 + 打新 ≥ 11.0%。
+  另加用户 worst-path 解释：**8 条路径全部 ≥ −25%**（见 P5_BASE 更正 3）。
+- **p10–p90 复算**（`output/p5_base_lot_20261018/summary.csv`）：
+  | 本金 | 成本 | p10–p90（复算） |
+  |---|---|---|
+  | 80 万 | 1 倍 | 12.85% – 13.76% |
+  | 80 万 | 2 倍 | 11.93% – 12.83% |
+  | 60 万 | 1 倍 | 12.59% – 13.51% |
+  | 60 万 | 2 倍 | 11.81% – 12.55% |
+- **补记 worst-path 突破**：80 万成本 2 的最差路径 MDD **−25.57%**，突破 25% 预算。
+  这不是"中位通过即可"，而是必须记录在案的事后收紧。
+  即使数据门槛修好，该路径仍使 `passed` 不可能，最多 `no_improvement`。
+- **ex-2025 CAGR**：80 万成本 1 **10.78%**（2018–2024），作为更诚实的 run-rate。
+- **promotion_approved = false** 不变。
+
 ## 证据
 
 - `output/p5_base_lot_20261018/report.json` — 汇总报告
 - `output/p5_base_lot_20261018/runs/cap{800000,600000}_cost{1,2}.csv` — 8 路径明细
+- `output/p5_base_lot_20261018/summary.csv` — p10–p90 复算来源
 - `scripts/p5_base_lot_replay.py` — 整手账重放脚本
-- `scripts/p5_realizable.py`（已修正 `gross=GROSS`）— 原矩阵脚本
+- `scripts/p5_realizable.py`（已修正 `gross=GROSS`）— 原矩阵脚本，只作 smoke，不重跑 32 格

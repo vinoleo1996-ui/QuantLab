@@ -46,3 +46,7 @@ P5_BASE 判定：
 6. 数据门槛未过：`sz.000616` 120 日真实停牌使 `data_quality_ok=false`；800k 成本2 有 1/8 路径
    MDD −25.57%。状态 `insufficient_data`，`promotion_approved=false`。看板主 KPI 若已切到
    13.92%，应回退为 `insufficient_data`，参考 13.57/12.59（未过数据门槛）。
+
+> 2026-10-18 追加：12.42%/13.92% 及 32 格矩阵已整体作废；权威证据为
+> `output/p5_base_lot_20261018/`，口径更正见 `docs/prereg/P5_REALIZABLE.md` 记录更正 2
+> 与 `docs/prereg/P5_BASE.md` 更正 3。

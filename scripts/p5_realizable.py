@@ -10,7 +10,8 @@ exposure lands near 53% with ~12% idle cash.
 This diagnostic re-runs the production share ledger at the true sub-account scale
 (520k = 65% x 800k, 390k = 65% x 600k), then packs it with the same G0 sleeve at
 65% through quantlab/p4_alloc.py. Read-only w.r.t. the frozen books; new output
-under output/p5_realizable_20261017/.
+under output/p5_realizable_20261018_smoke/. QDII premium uses the production
+adjusted basis so the stock-lot drag is directly comparable with P5_BASE.
 """
 from __future__ import annotations
 
@@ -33,8 +34,8 @@ from quantlab.alpha.portfolio import random_order, schedule
 
 START, END = '2018-01-02', '2026-09-22'
 ALPHA = ROOT / 'output/p4_alpha_20261012'
-OUT = ROOT / 'output/p5_realizable_20261017'
-DELISTINGS = ROOT / 'data/smallcap_v4/20261006T152412Z/delistings.parquet'
+OUT = ROOT / 'output/p5_realizable_20261018_smoke'
+DELISTINGS = ROOT / 'data/smallcap_v4/20261013T023232Z/delistings.parquet'
 PHASES = (0, 5, 10, 15)
 SEEDS = (1, 2)
 GROSS = 0.97
@@ -84,12 +85,18 @@ def equity_stats(result):
 
 def combo(equity_nav, cost, rebalance='quarter'):
     etf = etf_g0(equity_nav.index)
-    premium = R.qdii_premium_frame(equity_nav.index, basis='legacy')
-    nav, trace = A.allocate(equity_nav, etf, SHARE, cost_mult=cost, premium=premium,
-                            rebalance=rebalance, overflow={'gold': 0.5, 'treasury': 0.5},
-                            target_fn=g0_target)
+    premium = R.qdii_premium_frame(equity_nav.index, basis='adjusted')
+    saved = (A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY)
+    A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY = 0.23, 0.08, 0.50
+    try:
+        nav, trace = A.allocate(equity_nav, etf, SHARE, cost_mult=cost, premium=premium,
+                                rebalance=rebalance, overflow={'gold': 0.5, 'treasury': 0.5},
+                                target_fn=g0_target)
+    finally:
+        A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY = saved
     s = A.stats(nav)
-    return dict(cagr=float(s['cagr']), mdd=float(s['mdd']), nav=nav)
+    return dict(cagr=float(s['cagr']), mdd=float(s['mdd']), nav=nav,
+                premium_basis=premium.attrs.get('basis', 'adjusted'))
 
 
 def main():
@@ -97,12 +104,30 @@ def main():
     parser.add_argument('--capitals', default='520000,390000')
     parser.add_argument('--costs', default='1,2')
     parser.add_argument('--quick', action='store_true', help='one path only, for timing')
+    parser.add_argument('--out', type=Path, default=OUT, help='output directory')
+    parser.add_argument('--resume', action='store_true', help='allow reading existing NAV files')
     args = parser.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True)
+    out_dir = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Guard: without --resume, existing NAV or cell files are an error (prevents accidental re-use)
+    if not args.resume:
+        existing = list(out_dir.glob('nav_cap*.csv')) + list(out_dir.glob('cell_cap*.json'))
+        if existing:
+            print('ERROR: existing NAV/cell files found and --resume not given:', existing[:3], file=sys.stderr)
+            sys.exit(1)
 
     all_plans = plans()
     if args.quick:
         all_plans = {(0, 1): all_plans[(0, 1)]}
+
+    # Assert gross and weight sum
+    for (phase, seed), targets in all_plans.items():
+        for row in targets:
+            wsum = sum(row.get('weights', {}).values())
+            assert wsum <= GROSS + 1e-6, f'weights sum {wsum} > gross {GROSS} at phase={phase} seed={seed}'
+    assert GROSS == 0.97, f'GROSS={GROSS}, expected 0.97'
+
     codes = sorted({c for rows in all_plans.values() for row in rows
                     for c in list(row['weights']) + row['sell']})
     dataset = p4_ledger.load_dataset(codes)
@@ -110,21 +135,24 @@ def main():
 
     report = {'window': [START, END], 'share': SHARE, 'gross': GROSS,
               'prereg': 'docs/prereg/P5_REALIZABLE.md',
-              'cells': {}, 'promotion_approved': False}
+              'resumed': bool(args.resume), 'cells': {}, 'promotion_approved': False}
     for capital in [float(x) for x in args.capitals.split(',')]:
         for cost in [float(x) for x in args.costs.split(',')]:
             rows = []
             for (phase, seed), targets in sorted(all_plans.items()):
-                nav_csv = OUT / f'nav_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.csv'
-                cell_json = OUT / f'cell_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.json'
-                if nav_csv.exists():
+                nav_csv = out_dir / f'nav_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.csv'
+                cell_json = out_dir / f'cell_cap{int(capital)}_cost{cost:g}_p{phase}_s{seed}.json'
+                if args.resume and nav_csv.exists():
                     saved = pd.read_csv(nav_csv, index_col=0).iloc[:, 0]
                     saved.index = pd.to_datetime(saved.index)
                     st = A.stats(saved)
                     cell = dict(path=f'p{phase}_s{seed}', cagr=float(st['cagr']), mdd=float(st['mdd']),
                                 equity_cagr=None, mean_exposure=None, mean_cash=None,
                                 mean_names=None, orders=None, data_issues=None,
-                                delisted_end=None, rebuilt_from_nav=True)
+                                data_quality_ok=None, stale_held_max_days=None,
+                                stale_held_codes=None, delisting_liquidations=None,
+                                missing_panel_count=None, premium_basis=None,
+                                delisted_end=None, rebuilt_from_nav=True, resumed=True)
                     if cell_json.exists():
                         cell.update({k: v for k, v in json.loads(cell_json.read_text()).items()
                                      if v is not None})
@@ -141,14 +169,21 @@ def main():
                 c = combo(nav, cost)
                 end_hold = result['account'][-1]['quantities']
                 delisted_end = [code for code in end_hold if code in delist.index]
+                summary = result['summary']
                 cell = dict(path=f'p{phase}_s{seed}', cagr=c['cagr'], mdd=c['mdd'],
                             equity_cagr=float((nav.iloc[-1] ** (365.25 / (nav.index[-1] - nav.index[0]).days) - 1)),
                             mean_exposure=float(snaps.exposure.mean()),
                             mean_cash=float(snaps.cash_ratio.mean()),
                             mean_names=float(snaps.n.mean()),
                             orders=len(result['orders']),
-                            data_issues=len(result['data_issues']),
-                            delisted_end=delisted_end)
+                            data_issues=summary['data_issues'],
+                            data_quality_ok=bool(summary['data_quality_ok']),
+                            stale_held_max_days=int(summary['stale_held_max_days']),
+                            stale_held_codes=summary['stale_held_codes'],
+                            delisting_liquidations=int(summary['delisting_liquidations']),
+                            missing_panel_count=int(summary['missing_panel_count']),
+                            premium_basis=c['premium_basis'],
+                            delisted_end=delisted_end, resumed=False)
                 rows.append(cell)
                 report['cells'][f'cap{int(capital)}_cost{cost:g}_{cell["path"]}'] = cell
                 pd.Series(c['nav']).to_csv(nav_csv)
@@ -157,17 +192,21 @@ def main():
                 del result, snaps, nav, c
             frame = pd.DataFrame(rows)
             done = frame.dropna(subset=['cagr'])
+            names = done.mean_names.dropna() if 'mean_names' in done else pd.Series(dtype=float)
+            quality = done.data_quality_ok.dropna() if 'data_quality_ok' in done else pd.Series(dtype=bool)
             report['cells'][f'summary_cap{int(capital)}_cost{cost:g}'] = dict(
-                n=len(frame), computed=len(done), resumed=int(frame.cagr.isna().sum()),
+                n=len(frame), computed=len(done),
+                resumed=int(frame.resumed.fillna(False).sum()) if 'resumed' in frame else 0,
                 cagr=float(done.cagr.median()) if len(done) else None,
                 mdd=float(done.mdd.median()) if len(done) else None,
                 cagr_p10=float(done.cagr.quantile(0.1)) if len(done) else None,
                 cagr_p90=float(done.cagr.quantile(0.9)) if len(done) else None,
                 mean_exposure=float(done.mean_exposure.mean()) if len(done) else None,
                 mean_cash=float(done.mean_cash.mean()) if len(done) else None,
-                mean_names=None)  # resumed cells carry no per-name metadata; do not aggregate
-    (OUT / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=1, default=str))
-    print('wrote', OUT / 'report.json')
+                mean_names=float(names.mean()) if len(names) else None,
+                data_quality_ok=bool(quality.all()) if len(quality) else None)
+    (out_dir / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=1, default=str))
+    print('wrote', out_dir / 'report.json')
 
 
 if __name__ == '__main__':
