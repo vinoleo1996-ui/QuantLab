@@ -37,6 +37,7 @@ import p5_base_orders as O
 from quantlab import p4_alloc as A
 from quantlab import p4_ledger
 from quantlab.data.suspensions import SuspensionEvidence
+from quantlab.smallcap.panel import resolve_trusted_panel
 from quantlab.smallcap.universe import decision_grid
 
 OUT = ROOT / 'output/p5_forward'
@@ -320,9 +321,10 @@ def prestart_calendar(as_of, horizon_days=45):
     business-day placeholders. They only populate ``next_grid``; every prestart artifact is
     labelled ``calendar_provisional`` and none of these dates can produce orders.
     """
-    panel = ROOT / 'data/smallcap_v4/20261018T012723Z/close.parquet'
+    trusted = resolve_trusted_panel(need_fields=('close',))
+    panel = trusted['path'] / 'close.parquet'
     calendar = pd.DatetimeIndex(pd.read_parquet(panel, columns=[]).index)
-    source = str(panel.relative_to(ROOT))
+    source = str(panel.relative_to(ROOT)) if panel.is_relative_to(ROOT) else str(panel)
     requested = pd.Timestamp(as_of).normalize()
     horizon = max(calendar[-1], requested + pd.Timedelta(days=horizon_days))
     provisional = horizon > calendar[-1]

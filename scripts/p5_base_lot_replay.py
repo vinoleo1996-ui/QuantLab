@@ -189,7 +189,7 @@ def g0_sleeve_target(etf_returns_upto, share):
 
 
 def run_one(stock_nav, stock_exposure, etf_nav, etf_cash_ratio, cost,
-            quarter_basis='window', calendar=None):
+            quarter_basis='window', calendar=None, equity_share=EQUITY_SHARE):
     """Blend two sleeve NAVs; the G0 sleeve is one asset because its own lot ledger already
     applies the 3:3:2 split, quarterly trades, fees and the QDII overflow."""
     sessions = stock_nav.index
@@ -198,7 +198,7 @@ def run_one(stock_nav, stock_exposure, etf_nav, etf_cash_ratio, cost,
     A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY = 0.23, 0.08, 0.50
     try:
         nav, trace = A.allocate(
-            stock_nav, etf_returns, EQUITY_SHARE, cost_mult=cost, rebalance='quarter',
+            stock_nav, etf_returns, equity_share, cost_mult=cost, rebalance='quarter',
             target_fn=g0_sleeve_target, basis=quarter_basis, calendar=calendar)
     finally:
         A.DISASTER_DD, A.RECOVER_DD, A.DISASTER_EQUITY = saved
@@ -211,13 +211,14 @@ def run_one(stock_nav, stock_exposure, etf_nav, etf_cash_ratio, cost,
                             cash_mean=float((1 - held_stock - held_etf).mean()))
 
 
-def run_config(capital, cost, plans, targets, dataset, sessions, out, quarter_basis='window'):
+def run_config(capital, cost, plans, targets, dataset, sessions, out, quarter_basis='window',
+               equity_share=EQUITY_SHARE):
     rows = []
     run_path = out / 'runs' / f'cap{int(capital)}_cost{int(cost)}.csv'
     nav_path = out / 'nav'
     run_path.parent.mkdir(parents=True, exist_ok=True)
     nav_path.mkdir(parents=True, exist_ok=True)
-    stock_capital, etf_capital = capital * EQUITY_SHARE, capital * (1 - EQUITY_SHARE)
+    stock_capital, etf_capital = capital * equity_share, capital * (1 - equity_share)
     etf_nav, etf_meta = run_g0_lot_sleeve(sessions, etf_capital, cost, quarter_basis,
                                           dataset.calendar)
     evidence = SuspensionEvidence()
@@ -228,7 +229,7 @@ def run_config(capital, cost, plans, targets, dataset, sessions, out, quarter_ba
         stock_nav = stock['nav']
         nav, trace, blend_meta = run_one(stock_nav, stock['exposure'], etf_nav,
                                          etf_meta['cash_ratio'], cost, quarter_basis,
-                                         dataset.calendar)
+                                         dataset.calendar, equity_share)
         pd.DataFrame({'blended': nav, 'stock': stock_nav.reindex(sessions),
                       'etf': etf_nav.reindex(sessions)}).to_csv(
             nav_path / f'cap{int(capital)}_cost{int(cost)}_{name}.csv')

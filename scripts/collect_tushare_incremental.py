@@ -20,30 +20,25 @@ sys.path.insert(0, str(ROOT))
 from quantlab.data.tushare_adapter import TushareAdapter
 
 PANEL_DIR = ROOT / "data/smallcap_v4"
+AMOUNT_PER_UNIT = 1000  # datahubco reports amount in thousand CNY; the panel stores CNY
 ASSETS_DIR = ROOT / "data/smallcap_assets"
 OUT_DIR = ROOT / "data/tushare_incremental"
 
 
 def latest_panel_dir() -> Path | None:
-    """Find the most recent panel directory by actual data date (not directory name)."""
+    """The trusted panel, resolved fail-closed instead of by directory-name order.
+
+    A newer ad-hoc merge can carry newer prices while its amount/turnover/limit fields stop
+    earlier (20261018T012723Z). ``resolve_trusted_panel`` rejects it on the field-date check.
+    """
     if not PANEL_DIR.exists():
         return None
-    best_dir, best_date = None, None
-    for d in PANEL_DIR.iterdir():
-        if not d.is_dir():
-            continue
-        close_path = d / "close.parquet"
-        if not close_path.exists():
-            continue
-        try:
-            df = pd.read_parquet(close_path)
-            last_date = df.index.max()
-            if best_date is None or last_date > best_date:
-                best_date = last_date
-                best_dir = d
-        except Exception:
-            continue
-    return best_dir
+    from quantlab.smallcap.panel import resolve_trusted_panel
+    try:
+        return resolve_trusted_panel(PANEL_DIR)['path']
+    except ValueError as exc:
+        print(f'no trusted panel: {exc}', flush=True)
+        return None
 
 
 def existing_calendar(panel_dir: Path) -> pd.DatetimeIndex:
@@ -83,8 +78,8 @@ def fetch_daily_incremental(adapter: TushareAdapter, start_date: str, end_date: 
             continue
         df["date"] = df["trade_date"]
         df["code"] = df["ts_code"].apply(canonical_code)
-        df["volume"] = df["vol"] * 100  # convert lots to shares
-        df["amount"] = df["amount"]
+        df["volume"] = df["vol"] * 100  # lots -> shares
+        df["amount"] = df["amount"] * AMOUNT_PER_UNIT  # thousand CNY -> CNY (dataset_v5.py:34)
         all_rows.append(df[["date", "code", "open", "high", "low", "close", "pre_close", "volume", "amount"]])
 
     if not all_rows:
@@ -229,6 +224,7 @@ def main():
         "n_dates": int(long_df["date"].nunique()),
         "n_codes": int(long_df["code"].nunique()),
         "volume_unit": "shares (lots * 100)",
+        "amount_unit": "CNY (thousand CNY * 1000)",
         "panel_based_on": str(panel_dir) if panel_dir else None,
     }
     (out / "manifest.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))

@@ -2836,3 +2836,42 @@ Quant Data OS 只覆盖沪深300 的 443 只；没有市值字段；北交所缺
 - **下一开放问题**：Phase 2 停牌/ETF 分类与 P5_BASE 复评；Phase 2.5 数据抽查需独立复核
   （并发笔记把 `universe.py` 的 15 当成 POOL50 实际上限，且把 `sz.000616` 的 2018 停牌
   与 10-12..10-16 增量混在一起，不能直接采用）。
+
+## 波次 0D 进展：可信面板入口与采集器单位（2026-10-18 18:40 CST）
+
+- **D1 可信面板解析**：新增 `quantlab/smallcap/panel.py: resolve_trusted_panel()`：
+  读 `meta.json` 的 `fields` 声明，要求 `close/amount/adj_close` 等字段都存在且**最后 session 一致**，
+  否则拒绝并把原因写进异常；同最后日的重复快照取最早目录名。实测解析到
+  **20261013T023232Z**（close sha `9341f8dffd99…`），坏面板 `20261018T012723Z`
+  因 `meta` 未声明 fields/字段止日不一致被拒。
+  已接入两处静默选版：`quantlab/p4_ledger.py` 的 delistings 回退（原 `candidates[-1]`）
+  与 `scripts/p5_snapshot.py: prestart_calendar`（原硬编码 `20261018T012723Z`）。
+  测试 `tests/test_panel_resolve.py` 5 项全绿。
+- **D2/D4 采集器**：`scripts/collect_tushare_incremental.py` 的 amount 由千元乘 1000 转元
+  （`AMOUNT_PER_UNIT`，与 `dataset_v5.py:34` 一致），manifest 增 `amount_unit`；
+  `latest_panel_dir()` 改走 `resolve_trusted_panel`，不再按目录名/静默吞错。
+  测试 `tests/test_collector_units.py` 3 项。
+- **未完成**：D3 复权链重建（10-13 之后需回源 `adj_factor`，需用户在 shell 导出
+  `DATAHUB_API_KEY`/`PCD_API_KEY`；无密钥段落 blocked）；D4 的 `daily_basic/stk_limit` 增量与
+  `update_tradestatus/update_delistings` 接线；D5/D6；D7/D8/D9。
+- **新发现的运行环境缺口**：`.venv2` 未安装 `requests`，采集器无法在本 venv 直接运行；
+  homebrew python3.12 也未装。回源前需在具备 requests 的环境（或用户 shell）运行，
+  本次测试用 import-only stub 覆盖了单位与选 base 的逻辑，没有网络调用。
+
+## v8 零成本诊断与低换手 H6 的先行结论（2026-10-18 19:00 CST）
+
+- **三项零成本诊断（`P8_diag/ZERO_COST`，sha256 `55d6b82a…`）全部阴性**：
+  解禁否决覆盖率中位 <8% → `no_action`；行业条件反转 20 日差 −0.47%、NW t **−1.27**；
+  分数加权 vs 等权 −0.013%/20 日、t **−1.60**。
+  按 GBDT 取前 50 的"集中度"毛差为 +0.58%/20 日（t 4.45），但这是毛收益，
+  P4_ALPHA 的 GBDT 账本已被换手/成本吃掉；不作候选，只记录毛净差。
+- **低换手 H6（`P8_H6_LOW_TURN`，sha256 `46804167…`）先行判负**：
+  exit_frac 由先验换算表固定为 0.75（不搜索），但事件数仍 1,017、平均替换比例 3.1%，
+  **年单边换手 3.61× > 2.95× 门槛**。按预注册"任一门槛不过即 no_improvement"，
+  该假设不再成立；账本仍跑完仅作完整记录（不调 exit_frac、不重跑）。
+  机制：日频重检本身就是换手来源，单靠放宽退出带宽压不到 2.95×。
+- **数据线**：D1/D2/D4 已落地（见上节）；D3 复权链、D4 六字段增量、D5/D6/D7–D9 未做；
+  `.venv2` 缺 `requests`，采集器无法在本 venv 直接运行（需用户 shell 或安装依赖）。
+- **G0_60**：已登记 `P8_g0_60/ALLOC60_G0`（sha256 `f71b5d33…`）并实现
+  `scripts/p8_g0_60.py`（800k、成本1/2、8 路径、60/40、整手、calendar 季末），
+  等 H6/P5_H 的账本跑完后启动，避免三组 replay 争 CPU。

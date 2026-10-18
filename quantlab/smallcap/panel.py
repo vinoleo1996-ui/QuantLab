@@ -226,5 +226,62 @@ def latest_version():
     return versions[-1]
 
 
+def _last_session(path):
+    index = pd.read_parquet(path, columns=[]).index
+    return pd.to_datetime(index).max()
+
+
+def resolve_trusted_panel(root=PANEL_ROOT, need_fields=('close', 'amount'), as_of=None):
+    """Return the newest panel version whose declared fields all end on the same session.
+
+    A version written by an ad-hoc merge can carry newer prices while its derived fields stop
+    earlier (``20261018T012723Z``: close to 10-16, amount/turnover/limit to 10-09 with a stale
+    adjustment factor). Consumers must not silently take the alphabetically last directory.
+    ``meta.json`` has to declare ``fields``; every required field must exist and share its last
+    session, otherwise the version is rejected with the reason recorded.
+    """
+    root = Path(root)
+    reasons = {}
+    candidates = []
+    for path in sorted(root.iterdir()):
+        meta_path = path / 'meta.json'
+        if not meta_path.is_file():
+            reasons[path.name] = 'missing_meta'
+            continue
+        meta = json.loads(meta_path.read_text())
+        declared = list(meta.get('fields') or [])
+        if not declared:
+            reasons[path.name] = 'meta_does_not_declare_fields'
+            continue
+        missing = [name for name in (*need_fields, 'adj_close') if name not in declared]
+        if missing:
+            reasons[path.name] = f'undeclared_fields:{missing}'
+            continue
+        absent = [name for name in (*need_fields, 'adj_close')
+                  if not (path / f'{name}.parquet').is_file()]
+        if absent:
+            reasons[path.name] = f'missing_files:{absent}'
+            continue
+        lasts = {name: _last_session(path / f'{name}.parquet') for name in need_fields}
+        if len(set(lasts.values())) != 1:
+            reasons[path.name] = 'field_last_sessions_differ:' + ','.join(
+                f'{name}={value.date()}' for name, value in lasts.items())
+            continue
+        last = next(iter(lasts.values()))
+        if as_of is not None and last < pd.Timestamp(as_of).normalize():
+            reasons[path.name] = f'ends_before_as_of:{last.date()}'
+            continue
+        candidates.append((last, path.name, path, meta, declared))
+    if not candidates:
+        raise ValueError('no_trusted_panel:' + json.dumps(reasons, sort_keys=True))
+    newest = max(item[0] for item in candidates)
+    # duplicate snapshots of the same build share a last session; the earliest name is the original
+    last, version, path, meta, declared = sorted(
+        (item for item in candidates if item[0] == newest), key=lambda item: item[1])[0]
+    return {'version': version, 'path': path, 'last_session': last,
+            'fields': declared, 'meta': meta,
+            'close_sha256': hashlib.sha256((path / 'close.parquet').read_bytes()).hexdigest()}
+
+
 if __name__ == '__main__':
     build()

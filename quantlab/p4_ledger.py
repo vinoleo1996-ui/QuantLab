@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 import stable_book as book  # noqa: E402
+from quantlab.smallcap.panel import resolve_trusted_panel  # noqa: E402
 
 
 def to_targets(schedule):
@@ -50,8 +51,13 @@ def load_dataset(codes, manifest_path=None):
     # publish it under data/smallcap_v4/<version>/. Fall back to the newest build.
     delist_path = root / 'delistings.parquet'
     if not delist_path.exists():
-        candidates = sorted((ROOT / 'data/smallcap_v4').glob('*/delistings.parquet'))
-        delist_path = candidates[-1] if candidates else None
+        # never take the alphabetically last directory: an ad-hoc merge can be newer and wrong
+        try:
+            delist_path = resolve_trusted_panel()['path'] / 'delistings.parquet'
+        except ValueError:
+            delist_path = None
+        if delist_path is not None and not delist_path.is_file():
+            delist_path = None
     if delist_path is not None:
         delistings = pd.read_parquet(delist_path)
         delistings.attrs['source'] = str(delist_path.relative_to(ROOT))
