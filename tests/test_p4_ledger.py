@@ -1,24 +1,37 @@
 import unittest
+from unittest import mock
 
 from quantlab import p4_ledger
 
+TARGETS = [{'signal_date': '2024-01-02', 'weights': {'sh.600000': 0.5},
+            'active': ['sh.600000'], 'sell': []}]
+
 
 class P4LedgerTests(unittest.TestCase):
-    def test_capital_is_swapped_only_inside_the_context(self):
-        before = p4_ledger.book.INITIAL_CASH
-        with p4_ledger.capital(800_000):
-            self.assertEqual(p4_ledger.book.INITIAL_CASH, 800_000.0)
-        self.assertEqual(p4_ledger.book.INITIAL_CASH, before)
-        with self.assertRaises(RuntimeError), p4_ledger.capital(1.0):
-            raise RuntimeError('boom')
-        self.assertEqual(p4_ledger.book.INITIAL_CASH, before)
+    def forwarded(self, **kwargs):
+        """Capture the arguments ``replay`` hands to the account replay, without touching a panel."""
+        seen = {}
 
-    def test_exposure_swaps_gross_and_cash_buffer_and_restores(self):
-        self.assertEqual((p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER), (0.90, 0.10))
-        with p4_ledger.exposure(0.97):
-            self.assertEqual(p4_ledger.book.GROSS, 0.97)
-            self.assertAlmostEqual(p4_ledger.book.CASH_BUFFER, 0.03)
-        self.assertEqual((p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER), (0.90, 0.10))
+        def fake_replay_account(dataset, targets, **call):
+            seen.update(call)
+            return {'summary': {}}
+
+        with mock.patch.object(p4_ledger.book, 'replay_account', fake_replay_account):
+            p4_ledger.replay(TARGETS, start='2024-01-02', end='2024-01-03',
+                             dataset=object(), **kwargs)
+        return seen
+
+    def test_account_parameters_are_forwarded_not_swapped_into_globals(self):
+        before = (p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER, p4_ledger.book.INITIAL_CASH)
+        call = self.forwarded(capital_cny=800_000.0, gross=0.97)
+        self.assertEqual(call['capital'], 800_000.0)
+        self.assertEqual(call['gross'], 0.97)
+        self.assertIsNone(call['cash_buffer'])
+        self.assertEqual((p4_ledger.book.GROSS, p4_ledger.book.CASH_BUFFER,
+                          p4_ledger.book.INITIAL_CASH), before)
+
+    def test_missing_capital_falls_back_to_the_mandate(self):
+        self.assertEqual(self.forwarded()['capital'], p4_ledger.MANDATE.capital_cny)
 
     def test_sell_list_keeps_every_previously_targeted_name(self):
         rows = p4_ledger.to_targets({'2024-01-02': {'sh.600000': .5, 'sz.000001': .4},

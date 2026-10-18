@@ -1,7 +1,214 @@
 # QuantLab 研究接续台账
 
-更新时间：2026-10-18 00:24 CST（对账补记；下方 00:45 为并行会话自报时间，落盘早于本节）。
+更新时间：2026-10-18 16:20 CST（波次 0 正确性收口：B1 季末基准、B2 断供门、M6 参数隔离、M1/M5、M2、M3/M4/N1/N2）。
 唯一主工作目录：`/Users/agiuser/Desktop/QuantLab`。
+
+## 波次 0 收口：会计内核与数据门的三个 BLOCKER/MAJOR 修复（2026-10-18 16:20 CST）
+
+**状态：波次 0 的内核链（B1/B2/M6）与 M1/M5/M2/M3/M4/N1/N2 完成并通过定向测试；
+权威数字在 B1 双口径重跑后不变（|ΔCAGR| ≤0.000123pp、|ΔMDD| = 0.0）。
+N3（面板硬编码）并入 D1 可信面板入口。数据管线波次 0D 与 H6 Stage A 尚未开始。**
+
+- **B1 伪季末调仓（BLOCKER，已实测证实并修复）**：`quantlab/p4_alloc.py:19-21` 的
+  `quarter_ends(sessions)` 取“窗口内每季最大 session”，重放窗口止于季中时把窗口末日当季末。
+  实测窗口 09-22 → 季末含 **2026-09-22**；窗口 09-30/10-16 → 季末 **2026-09-30**。
+  修法：`basis='window'|'calendar'`（calendar 先对全历史日历求季末再与窗口取交集），
+  默认 `window` 保历史可复现；`scripts/p5_base_lot_replay.py`、`scripts/p5_snapshot.py`
+  的前向路径改传 `calendar`。`tests/test_alloc_quarter_ends.py` 5 项，含
+  “window 口径逐位复现冻结 ETF 袖（<1e-6）且 calendar 口径消除 2026-09-22 那笔调仓”。
+- **B1 双口径重跑（32 path）**：`output/p5_base_lot_20261018_r1/`（`dual_basis_report.json`、
+  `dual_basis_comparison.csv`，sha256 `cf9c68f7…`）。四格中位数与最差路径全部不变：
+  800k 成本1 **13.57%/−22.08%**、成本2 **12.59%/−22.57%**（最差路径 **−25.57%** 仍破线）、
+  600k **13.34%/12.24%**；p0_s1 13.5248050% → **13.5248666%**。
+  登记：`P5_base/G97_65_G0#outcome6`（role=diagnostic），
+  `docs/prereg/P5_BASE.md` 更正 4（sha256 `3185b66e…`）。
+- **B2 断供股 fail-closed（BLOCKER）**：`quantlab/backtest/ledger.py:141-149` 只强平有退市记录者；
+  `sh.600293`（末 bar 2026-09-28、`delistings` 无记录、曾被 POOL50 持有）会无限陈旧盯市、零清算折价，
+  且原分类器会把“原始数据显示一直停牌”的长段判成 `suspended` 而放行。
+  修法：`quantlab/data/suspensions.py classify_run(..., window_end=...)` —
+  无退市记录、段未结束于窗口末且 ≥20 session → `open_ended_supply_gap`（unexplained）；
+  `scripts/stable_book.py data_quality` 自动推 `window_end`。
+  历史 8 路径 END=09-22 < 09-28 不触发，故数字不变；前向跨过该日即 `blocked`。
+  `tests/test_stale_gate.py` 5 项。
+- **M6 账本参数隔离（MAJOR，并行会话真实风险）**：`quantlab/p4_ledger.py` 原先用
+  contextmanager 改 `stable_book` 全局（GROSS/CASH_BUFFER/INITIAL_CASH）；两个并发 replay 会互相覆盖。
+  已删 `capital()/exposure()`，改为 `replay_account(..., capital=, gross=, cash_buffer=)` 参数直传，
+  并新增 `stable_book.cash_buffer_for(gross)`。`tests/test_ledger_isolation.py` 3 项（含双线程）。
+- **M1/M5**：行业上限改为由 mandate 权重推导（`universe.industry_slots`，50 只 → 12），
+  删除 `INDUSTRY_SLOTS=15` 常量，`continuous_band.py`/`full_pool.py`/
+  `simulate_price_factor_reference.py` 三处本地 15 一并改推导；
+  `pool_on` 内部统一排除 `bj.`（原先只靠调用点，`p4_attrib.py:119`、`smallcap_layers.py:57`、
+  `p1_m2.py:37`、`p4_baselines.py:74` 四处未过滤）。测试 9 项全绿。
+- **M2**：`scripts/p5_base_orders.py` 的 `--sweep`（511010 残差，非预注册标的）改写入
+  `orders_sweep.csv`/`summary_sweep.json`，正式 `orders.csv` 不再被诊断污染。
+- **M3/M4/N1/N2**：`scripts/p5_snapshot.py` 信号日只报 `frozen_schedule` 侧、
+  与 `decision_grid` 不一致即 `calendar_mismatch` 并 blocked；
+  六个月对照腿 `alloc60_series` 回到预注册定义（冻结 90% gross `POOL50` 股票腿 +
+  月度 calendar 月末，sha256 入快照），此前它用被测的 97% 组合当自己的对照；
+  9 个增量状态 legacy helper 抽到 `scripts/_legacy_p5_helpers.py`（含 ffill 可成交价的死代码）；
+  blocked 强制 `orders=[]`、`nav=null` 且跳过停止检查。测试 36 项。
+- **前向证据重算**：`output/p5_forward/parity/2026-09-22/snapshot.json`（calendar 口径
+  **13.5248666%/−23.7699395%**、NAV **2,418,168.3196**、ΔNAV 0.0，保留 window 口径参考）、
+  `dryrun/2026-09-22`（paper_simulated、orders 0）、`dryrun/2026-10-22`、`dryrun/2026-10-30`
+  （均 `blocked/as_of_beyond_complete_session`）、`prestart/2026-10-22`、`prestart/2026-10-30`
+  （`no_new_signal`、`calendar_provisional`）。登记 `P5_forward/P5_BASE#outcome3`，
+  `docs/prereg/P5_FORWARD.md` 更正四（sha256 `ebd5bdc2…`）。
+- **事故披露（必须留痕）**：搬移 legacy helper 时我用一次性 Python 切片脚本按原始偏移删除，
+  删除后偏移失效，把 `replay_book`/`grid_report`/`alloc60_series`/`six_month_check`/
+  `atomic_write` 的头尾拆进两个文件并写坏了 `six_month_check` 头部。
+  恢复依据：15:12 编译的正确字节码 `p5_snapshot.cpython-312.pyc`（损坏发生在 15:13），
+  备份在 `/tmp/p5_recovery/oracle_prebotch.pyc`；逐函数比对确认重建后
+  `replay_book`(3406B)、`grid_report`(672B)、`atomic_write`(318B)、`pending_orders`(234B)、
+  `frozen_schedule`(348B)、`run_parity`(1660B)、`prestart_calendar`(486B)、`run_prestart`(1042B)、
+  `main`(542B)、`six_month_check`(920B) 与 oracle 字节码**完全一致**，
+  仅 `alloc60_series`(946→932) 与 `run`(4696→4738) 是本次有意改动；
+  parity 端到端重放复现 13.5248666%/−23.7699395%/NAV 2,418,168.3196。
+  教训：同文件多处结构性改动必须逐处 Edit + grep 锚点确认，不得用批量偏移切片。
+- **测试**：波次 0 定向套件 **86 passed**（alloc/ledger/stale/pool/orders/snapshot 全部）；
+  全量 `pytest tests`（排除 3 个已知 import-order collection error）见
+  `/tmp/full_pytest_wave0.txt`，基线为 821 passed / 8 failed（8 个为历史基线）。
+- **关闭问题**：季末集合是否随窗口移动（已固定）；无退市记录断供股是否被静默放行（已 fail-closed）；
+  并发 replay 是否互相覆盖账户参数（已隔离）；诊断 sweep 是否污染正式订单（已分文件）；
+  六个月对照是否自证（已回到冻结 90% 腿）。
+- **下一开放问题**：D1 可信面板入口（顺带收 N3 硬编码）、D2 amount 千元与 D3 adj_close
+  陈旧外推的复权链重建、D5 退市表 BJ 缺口（257 只断供归因）、H6 Stage A。
+  外部拉取需用户在 shell 导出 `DATAHUB_API_KEY`/`PCD_API_KEY`；无密钥段落记 `blocked`。
+
+## V5 兑现审计：研究线零产出、年化未提升，Phase 0 两项欠账（2026-10-18 13:25 CST）
+
+**状态：操作线 Phase 1/2/3 完整，Phase 0/2.5 部分；研究线 Phase 4/4.5/5/6/7/8 零产出。
+年化收益没有提升是事实：权威数仍为 800k 成本1 13.57% / 成本2 12.59% / ex-2025 10.78%，
+最差路径 −25.57% 仍破 25% 预算。Phase 1–3 是执行现实性的减项修复，不含任何增益假设。**
+
+- **完成度核对**：`docs/research/` 不存在（Phase 4 前沿备忘录、4.2 数据资格报告、
+  4.5 `ALGO_TEARDOWN` 未开始）；`docs/prereg/` 无 H1–H6；`output/` 无
+  `crowding_*`/`h1_`…`h6_`/`p5_pool_map_*`。详见 `docs/PLAN_20261018.md` §H。
+- **Phase 0 欠账一：trial merge 从未执行。** 实测 `main` vs `workbuddy/main-a9d77e8e`
+  = **13 ahead / 9 behind、34 个分叉文件**（计划记录为 17，已翻倍），**11 个双写文件**：
+  `docs/PLAN_20261018.md`、`docs/RESEARCH_CONTINUITY.md`、`docs/REVIEW_20261017_ADJUDICATION.md`、
+  `docs/prereg/{P5_BASE,P5_FORWARD,P5_REALIZABLE}.md`、`docs/trial_ledger.csv`、
+  `quantlab/p4_ledger.py`、`scripts/{p5_base_lot_replay,p5_base_orders,stable_book}.py`。
+  单写者协议已被打破；且本会话 Phase 0–3 全部未提交，真 merge 门前置条件不满足。
+- **Phase 0 欠账二（本次已补）：513/515 差异逐码核验。**
+  `scripts/audit_513_membership.py` → `output/pool50_membership_audit_20261018/`。
+  差集 515 只（panel 6,080 − 外部 5-session 源 5,569），其中 BJ 250 只；
+  候选交叉 `output/p4_alpha_20261012/scores.parquet`（4,642 码、424 信号日、
+  sha `74fc7d8c…`）中 BJ = **0**，8 条 POOL50_G97 路径成员并集 362 只中 BJ = **0**
+  （代码级原因：`scripts/p4_alpha.py:85-86` 显式过滤 `bj.`，`universe.py:56` 的
+  `pool_on` 本身不排除）。但“差异不影响回测”**被证伪**：差集中 **214 只进过候选**
+  （209 只有退市日期），**19 只曾被 POOL50 实际持有**（各路径 7–12 只），
+  其中 18 只已退市、与 Phase 2 的“每格 19 笔退市清算”独立吻合。
+  结论方向：历史回测**不含**幸存者虚高。
+  遗留缺陷（报告数据负责人，不接管）：`sh.600293` 本地最后 bar 2026-09-28、
+  `delistings.parquet` 无记录、外部增量无行，且属曾被持有的 19 只之一 → 按 Phase 2
+  分类是 `unexplained` 供给缺口，fail closed。
+- **回归基线**：`pytest tests`（排除 3 个已知 import-order collection error）
+  **821 passed / 8 failed / 1 skipped + 72 subtests（256.97s）**，8 个失败与 Phase 0 基线
+  （778/8）同集合，0 新增；`validate_ledger` **0 error / 12 corrected / 134 trials**，
+  12 条 WARN 为预注册 append-only 更正后的 `prereg_sha256` 漂移，属预期。
+- **关闭问题**：BJ 与差集是否曾进入策略范围（已逐码核验并纠正交接结论）。
+- **下一开放问题**：(1) 10-18→10-30 等待窗口的时间分配（补 Phase 0 缺口 /
+  只读并行 Phase 4-4.5 / 严格守门），已提问未答；(2) 是否授权分批 commit 以启用真
+  trial merge 门；(3) `sh.600293` 供给缺口的证据补齐。
+
+## Phase 3 收口：重放式前向引擎，10-22/10-30 只能 prestart/blocked（2026-10-18 13:05 CST）
+
+**状态：Phase 3 代码与测试完成。2026-09-22 parity 逐位一致；10-22 与 10-30 都不是
+`p0_s1` 网格日，phase 0 下一次信号为 2026-11-02；生产账本止于 2026-09-30，新字段面板
+止于 2026-10-16 且无 MarketDataset manifest，因此这两个日期只能 `prestart`，
+真实快照在数据补齐前必须 `blocked`。**
+
+- **引擎**：`scripts/p5_snapshot.py` 改为每次从 2018-01-02 重放两条袖：股票袖
+  `p4_ledger.replay`（52 万、97% gross、冻结 `POOL50_G97_p0_s1`）+ ETF 袖
+  `run_g0_lot_sleeve`（28 万、整手、3:3:2），再按冻结规则季度混合；不再用 raw close
+  或增量 state 定价。快照订单只取账本 `pending/partial` 且剩余>0；执行日为下一交易日开盘。
+- **parity**：2026-09-22 重放 **13.5248% / −23.77% / NAV 2,418,156.87**，对
+  `output/p5_base_lot_20261018/runs/cap800000_cost1.csv` 的 ΔCAGR **8.3e-15pp**、
+  ΔNAV **0.0**，容差 0.20pp/0.20%；证据 `output/p5_forward/parity/2026-09-22/snapshot.json`。
+  该对照复用同一账本，不是独立验证。
+- **10-22/10-30 门禁**：`--prestart` 产出
+  `output/p5_forward/prestart/2026-10-22/snapshot.json`、
+  `output/p5_forward/prestart/2026-10-30/snapshot.json`。两者 `orders=[]`、
+  `status=prestart`、`data_status=not_available`、`calendar_provisional=true`。
+  网格：phase 0 最后 09-28/下一次 11-02；phase 5 最后 10-12/下一次 11-09；
+  phase 10 最后 10-19/下一次 11-16；phase 15 在 10-22 时为 09-18→10-26，在 10-30 时
+  为 10-26→11-23。10-22/10-30 本身均非网格日。`--as-of ... --dry-run` 实测两者均为
+  `blocked/as_of_beyond_complete_session`、`orders=[]`、`nav=null`，证据
+  `output/p5_forward/dryrun/2026-10-22/snapshot.json` 与
+  `output/p5_forward/dryrun/2026-10-30/snapshot.json`；未写 state。
+- **blocked 语义**：`P5_FORWARD.md` 更正三已登记（订单口径补录后 sha256
+  `232bab5b…`，补录前 `7014e3d4…`）：
+  请求日超过生产账本最后完整 session、或不是交易日、或数据质量/账户检查失败时，
+  只写 `blocked` snapshot（`orders=[]`、`nav=null`），不推进 state、不生成收益；
+  更正二“截断到最后一个有数据交易日”作废。
+- **状态分离修复**：原实现会把券商导入的 `broker_confirmed` 覆盖成 `paper_simulated`；
+  现 `status = blocked if 数据门槛失败 else 数据来源`。纸面 `state_paper.json` 清空
+  `cash/holdings` 并只存重放账本引用；券商 `state_broker.json` 保留导入的
+  `cash/holdings`，两者互不覆盖。
+- **订单脚本门禁**：`scripts/p5_base_orders.py` 新增 `--execution-date`；若请求日不是最新
+  网格日则 `stale_signal` 退出，若执行日不是信号日的下一交易日则
+  `execution_date_not_next_session` 退出，防止把旧网格信号当新订单。
+- **测试**：新增 `tests/test_p5_snapshot_state.py`、`tests/test_p5_snapshot_ledger.py`、
+  `tests/test_p5_snapshot_parity.py`（真实重放，34.68s）、
+  `tests/test_p5_base_orders_guard.py`；连同 Phase 2 套件共 **81 passed + 6 subtests**
+  （33.06s）。覆盖 blocked 不推进 state、同日幂等、纸面/券商分离、pending 订单过滤、
+  费用与 Ledger 一致、T+1、涨跌停、1% participation、分红/拆股、退市清算、prestart
+  next_grid、parity 容差。
+- **数据就绪**：生产 manifest calendar 最后 2026-09-30；新字段面板
+  `data/smallcap_v4/20261018T012723Z/` 到 2026-10-16，但缺 manifest/MarketDataset 桥，
+  且独立抽查显示 6 个字段未到最新日期、`pre_close` 仅 5 日、`adj_close` 用陈旧因子外推。
+  因此 10-22/10-30 的正式快照应直接 `blocked`，不得用 prestart 或新面板硬生成订单。
+- **关闭问题**：前向引擎与冻结 p0_s1 的会计一致性；10-22/10-30 是否有新信号；
+  纸面/券商状态串写；旧网格信号被误当新订单。
+- **下一开放问题（Phase 4，11 月且不早于 10-30）**：外部专家算法拆解与 A 股微盘约束下的
+  增量改进；H6+迟滞的灵活买卖 vs 固定 20 日网格对照；胜率只作次级/tie-breaker；
+  数据 owner 能否在首个真实快照前交付覆盖 10-30 的 extension dataset。
+
+## Phase 2 收口：停牌/ETF 分类落地，P5_BASE 复评仍不可晋升（2026-10-18 12:45 CST）
+
+**状态：Phase 2 完成。P5_BASE 全部 32 条 path 复跑且与冻结逐位一致；数据门槛由 false 转 true，
+但 800k 成本 2 最差路径 −25.57% 仍突破预算，两个资金档均为 `no_improvement`，从未 `passed`。**
+
+- **预注册**：`docs/prereg/P5_DATA_QUALITY_SUSPENSION.md`（sha256 `45cdc4c3…`，含
+  NaN 量额编码与 raw_ext 补证两条修正）。规则：held stale run 必须在每个 session 同时满足
+  `tradestatus=0`、volume/amount 为零或空、close==preclose、run 结束早于退市日，且有通过
+  sidecar 校验的 raw 行；任一缺口/矛盾整段归 `unexplained`。ETF 缺失日只在非调仓、无成交、
+  两源均无 bar、孤立即恢复时按最后收盘盯市，否则 `blocked`；执行价不再 ffill。
+- **实现**：新增 `quantlab/data/suspensions.py`（主缓存 + `raw_ext_20261018` 补证，多根解析、
+  校验失败 fail closed）；`scripts/stable_book.py` 新增 suspended/unexplained/coverage 字段，
+  gate 只卡 `unexplained<=5` 与覆盖完整；`quantlab/p4_ledger.py` 透传证据；
+  `scripts/p5_base_lot_replay.py` 分离 ETF raw 执行价与盯市价，输出新目录。
+- **复评证据**：`output/p5_base_lot_20261019/report.json`、`summary.csv`、32 份 NAV。
+  80 万成本1 **13.5742%/−22.0815%**、成本2 **12.5854%/−22.5435%**；60 万
+  **13.3423%/−21.3594%**、**12.2391%/−21.8470%**。与 `output/p5_base_lot_20261018/`
+  32 条 path 的 CAGR/MDD/分年/成交数最大绝对差 **0.0**（要求 ≤1e-10）；冻结目录未持久化 NAV，
+  故逐日 NAV 无基准，本轮 NAV 已落盘供后续比较。
+- **会计**：每格（8 path）19 笔退市清算、缺失 panel 0、`stock_data_quality_ok=true`、
+  `unexplained_stale_held_max_days=0`、`suspension_coverage_complete=true`、
+  `raw_uncovered_stale_codes=[]`、`etf_blocked=false`。最长 held stale 120 日为
+  `sz.000616` 真实停牌（2018-01-24..2018-07-24），已归 `suspended`。
+- **ETF 两日**：`sh511260` 2018-08-17、`sh513100` 2022-01-13。六份腾讯存档变体与实时 Eastmoney
+  均无 bar；均为交易日、非季末/调仓日、无 ETF 成交。归 `stale_mark`，共 2 日；
+  `etf_missing_on_rebalance=false`。因不在调仓日，去 ffill 未改变任何成交或 NAV。
+  证据 `output/p5_base_lot_20261019/etf_missing_day_audit.json`。
+- **补证**：19 只相关代码经 baostock 补拉到 2026-09-22，存 `data/local_supplement/raw_ext_20261018/`；
+  与主缓存重叠 10 只、24,949 行、0 字段不一致。审计
+  `output/p5_base_lot_20261019/suspension_evidence_extension.json`。真实停牌确认包括
+  `sh.688237` 2026-07-16..22、`sz.002677` 2026-07-10..16、`sz.000655` 2018-04-12。
+- **判决**：60 万严格算术/数据/worst-path 全过（cost2 最差 −24.74%），但 P5_BASE 是诊断，
+  不能晋升；80 万成本2 最差 −25.57% → `worst_path_ok=false`。因此状态均为
+  `no_improvement`，`promotion_approved=false`、`candidate_for_p1=false`。
+  worst-path 全 8 条规则是 `P5_BASE.md` 更正 3 的事后收紧，已按该口径记录，不改门槛、不调参。
+- **台账**：`docs/trial_ledger.csv` 追加 `P5_base/G97_65_G0#outcome5`（diagnostic，
+  `no_improvement`，P5_BASE.md 当前 sha256 `69df5fd5…`），校验 errors=[]。
+- **测试**：`tests/test_suspension_classification.py`（真实 `sz.000616`、NaN 量额、缺 raw、
+  单日矛盾、跨退市、5/6 日边界、损坏缓存 fail closed 等）、ETF stale_mark/blocked/不得 ffill、
+  `tests/test_data_quality.py`、`tests/test_p5_base_lot_replay.py` 共 31 项通过。
+- **关闭问题**：停牌 vs 数据缺口口径；ETF 两个缺失日来源；P5_BASE 数据门槛。
+- **下一开放问题（Phase 3）**：前向引擎与 10-22 无新信号检查；10-30 前向数据是否就绪。
+  独立抽查 `docs/notes/20261018_data_spotcheck_review.md` 显示新面板
+  `20261018T012723Z` 仍缺 6 个字段到最后日期、`pre_close` 仅 5 日、`adj_close` 用陈旧因子外推，
+  10-30 前向很可能只能 `blocked`，不得硬生成订单。
 
 ## 并行会话对账：可实现数字作废，采用修复后 97% 整手账（2026-10-18 00:24 CST）
 
@@ -2566,3 +2773,29 @@ Quant Data OS 只覆盖沪深300 的 443 只；没有市值字段；北交所缺
   - 结论：本地数值不能当首次公告值用，本地公告日可以用来与 Baostock 交叉核对。
 - 16:25 起，后台每 30 分钟用一次登录探测（`data/baostock/probe.log`）；解封后单进程按 profit → cash_flow → growth 顺序续采。首次探测仍是黑名单。
 - 下一开放问题：等 Baostock 解封并采完；黑名单如果长期不解，需要用户决定是否联系 Baostock 管理员或换数据源。
+
+## 2026-10-18 Phase 0–1 收口（仅追加）
+
+- **Phase 0 基线**：`main` HEAD `43e7c23`（含 env-only 密钥修复与 base 选择修复）；
+  `pytest tests`（排除 3 个已知 import-order collection error）为 **778 passed / 8 failed / 1 skipped**，
+  8 个失败与历史基线一致，未新增。冻结 hash 见
+  `output/frozen_source/20261018_p5_base_lot_SHA256SUMS.txt`；前向草稿副本见
+  `output/frozen_source/20261018_forward_draft/`（`p5_snapshot.py` sha256 `af6491ea…`，
+  `test_p5_snapshot.py` sha256 `727f9862…`）。
+- **行业上限审计**：POOL50 走 `quantlab/alpha/portfolio.py`，`industry_cap_names(50, 0.25, 12)` = **12**；
+  `quantlab/smallcap/universe.py` 的 `INDUSTRY_SLOTS=15` 属于另一条 legacy 路径，不是 P5_BASE 的有效上限。
+  BJ：`p4_alpha.py` 构分时显式排除 BJ；`pool_on(kind='adv')` 本身不排除 BJ，仍需历史成员审计。
+- **记录收口**：`P5_REALIZABLE.md` 追加记录更正 2（32 格矩阵 `withdrawn`，权威证据改为
+  `output/p5_base_lot_20261018/`）；`P5_BASE.md` 追加更正 3（25% 预算 = 8 条路径全部 ≥ −25%）；
+  台账追加 `P5_realizable` diagnostic base/outcome，`validate` 0 error。
+- **p5_realizable 修复**：`--out`/`--resume` 防误跑、权重和 ≤0.97 断言、每格记录
+  `data_quality_ok`/`stale_held_max_days`/`delisting_liquidations`/`missing_panel_count`/`premium_basis`；
+  并把组合层灾难线从 `p4_alloc` 默认 18% 对齐到 P5_BASE 的 23%。单路径 smoke
+  `520k`/成本1/p0_s1 = **13.5292%/−24.01%**（`resumed=false`、`gross=0.97`；
+  `output/p5_realizable_20261018_smoke/report.json`），与 `p5_base_lot` 的 13.5248% 相差 0.004pp。
+  `data_quality_ok=false`（`sz.000616` 120 日停牌 + 17 个 held stale）；不改变 `insufficient_data`。
+- **指标口径**：`p5_realizable` 单路径 13.09%→13.53% 的差异来自灾难线，不是整手约束；
+  此前“整手损失 0.77pp”结论继续不成立。
+- **下一开放问题**：Phase 2 停牌/ETF 分类与 P5_BASE 复评；Phase 2.5 数据抽查需独立复核
+  （并发笔记把 `universe.py` 的 15 当成 POOL50 实际上限，且把 `sz.000616` 的 2018 停牌
+  与 10-12..10-16 增量混在一起，不能直接采用）。

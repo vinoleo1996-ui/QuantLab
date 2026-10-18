@@ -6,7 +6,6 @@ frozen stable_book users are unaffected.
 """
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import io
 import json
@@ -21,27 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 import stable_book as book  # noqa: E402
-
-
-@contextlib.contextmanager
-def capital(value):
-    saved = book.INITIAL_CASH
-    book.INITIAL_CASH = float(value)
-    try:
-        yield
-    finally:
-        book.INITIAL_CASH = saved
-
-
-@contextlib.contextmanager
-def exposure(gross):
-    """Run one replay at a different maximum gross; the ledger cash buffer becomes ``1 - gross``."""
-    saved = book.GROSS, book.CASH_BUFFER
-    book.GROSS, book.CASH_BUFFER = float(gross), round(1.0 - float(gross), 10)
-    try:
-        yield
-    finally:
-        book.GROSS, book.CASH_BUFFER = saved
 
 
 def to_targets(schedule):
@@ -86,9 +64,11 @@ def load_dataset(codes, manifest_path=None):
 
 
 def replay(targets, *, start, end, cost_mult=1.0, dataset=None, manifest_path=None, capital_cny=None, gross=None,
-           delisting_haircut=0.0):
+           delisting_haircut=0.0, suspension_evidence=None, cash_buffer=None):
     codes = sorted({c for row in targets for c in list(row['weights']) + row['sell']})
     dataset = dataset or load_dataset(codes, manifest_path)
-    with capital(capital_cny or MANDATE.capital_cny), exposure(gross if gross is not None else book.GROSS):
-        return book.replay_account(dataset, targets, start=start, end=end, cost_mult=cost_mult,
-                                   delisting_haircut=delisting_haircut)
+    return book.replay_account(dataset, targets, start=start, end=end, cost_mult=cost_mult,
+                               delisting_haircut=delisting_haircut,
+                               suspension_evidence=suspension_evidence,
+                               capital=capital_cny or MANDATE.capital_cny, gross=gross,
+                               cash_buffer=cash_buffer)

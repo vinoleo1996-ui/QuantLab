@@ -11,21 +11,58 @@ VOL_WINDOW = 120
 DISASTER_DD, RECOVER_DD, DISASTER_EQUITY = 0.18, 0.08, 0.50
 
 
-def month_ends(sessions):
-    frame = pd.Series(sessions, index=sessions)
-    return set(frame.groupby([sessions.year, sessions.month]).max())
+def _natural_period_end(ts, period):
+    ts = pd.Timestamp(ts).normalize()
+    if period == 'month':
+        return ts + pd.offsets.MonthEnd(0)
+    last_month = 3 * (((ts.month - 1) // 3) + 1)
+    return pd.Timestamp(year=ts.year, month=last_month, day=1) + pd.offsets.MonthEnd(0)
 
 
-def quarter_ends(sessions):
-    frame = pd.Series(sessions, index=sessions)
-    return set(frame.groupby([sessions.year, (sessions.month - 1) // 3]).max())
+def _period_ends(sessions, period, basis='window', calendar=None):
+    """Rebalance dates for one frequency.
+
+    ``window`` takes the last session of each period inside ``sessions`` itself, which is the
+    legacy behaviour: a window ending mid-period treats its own final day as the period end.
+    ``calendar`` decides the period ends over the full exchange calendar first, then keeps only
+    those inside the window, so a date already chosen never moves as the window grows.
+    """
+    sessions = pd.DatetimeIndex(sessions)
+    if basis == 'window':
+        source = sessions
+    elif basis == 'calendar':
+        if calendar is None:
+            raise ValueError('calendar_required:period_ends')
+        calendar = pd.DatetimeIndex(calendar)
+        if not len(calendar) or sessions.max() > calendar.max():
+            raise ValueError('calendar_too_short:period_ends')
+        # A calendar that stops inside the in-progress period cannot know that period's end and
+        # would silently degrade to the window rule.
+        if len(sessions) and calendar.max().normalize() < _natural_period_end(sessions.max(), period):
+            raise ValueError('calendar_too_short:period_ends')
+        source = calendar
+    else:
+        raise ValueError(f'unknown_basis:{basis}')
+    groups = ([source.year, source.month] if period == 'month'
+              else [source.year, (source.month - 1) // 3])
+    frame = pd.Series(source, index=source)
+    ends = set(frame.groupby(list(groups)).max())
+    return ends & set(sessions)
 
 
-def rebalance_ends(sessions, rebalance='month'):
+def month_ends(sessions, basis='window', calendar=None):
+    return _period_ends(sessions, 'month', basis, calendar)
+
+
+def quarter_ends(sessions, basis='window', calendar=None):
+    return _period_ends(sessions, 'quarter', basis, calendar)
+
+
+def rebalance_ends(sessions, rebalance='month', basis='window', calendar=None):
     if rebalance == 'month':
-        return month_ends(sessions)
+        return month_ends(sessions, basis, calendar)
     if rebalance == 'quarter':
-        return quarter_ends(sessions)
+        return quarter_ends(sessions, basis, calendar)
     raise ValueError(f'unknown_rebalance:{rebalance}')
 
 
@@ -69,16 +106,18 @@ def pause_qdii(target, current, names, premium_today, overflow=None):
 
 
 def allocate(equity_nav, etf_returns, equity_share=0.60, cost_mult=1.0, premium=None,
-             rebalance='month', drawdown_check='rebalance', overflow=None, target_fn=None):
+             rebalance='month', drawdown_check='rebalance', overflow=None, target_fn=None,
+             basis='window', calendar=None):
     """Daily NAV (starting at 1) and a trace. ``etf_returns`` columns are the ETF sleeves, same index.
     ``premium``: optional date x sleeve frame of QDII premium known at each close. ``rebalance`` is
     ``month`` or ``quarter``; ``drawdown_check`` is ``rebalance`` (default, legacy) or ``daily``.
-    ``overflow`` is the destination split for paused QDII weight. ``target_fn`` replaces the sleeve rule."""
+    ``overflow`` is the destination split for paused QDII weight. ``target_fn`` replaces the sleeve rule.
+    ``basis``/``calendar`` choose how period-end rebalance dates are derived (see ``_period_ends``)."""
     sessions = equity_nav.index
     eq = equity_nav.pct_change(fill_method=None).fillna(0.0)
     returns = pd.concat([eq.rename('equity'), etf_returns.reindex(sessions).fillna(0.0)], axis=1)
     costs = np.array([EQUITY_COST] + [ETF_COST] * etf_returns.shape[1]) * cost_mult
-    ends = rebalance_ends(sessions, rebalance)
+    ends = rebalance_ends(sessions, rebalance, basis, calendar)
     if drawdown_check not in ('rebalance', 'daily'):
         raise ValueError(f'unknown_drawdown_check:{drawdown_check}')
     drawdown_days = set(sessions) if drawdown_check == 'daily' else ends

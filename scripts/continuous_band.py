@@ -25,7 +25,10 @@ import stable_book as book
 OUT = ROOT / 'output/continuous_band_20260928'
 HOLDINGS = 50
 BUFFER = 100
-INDUSTRY_SLOTS = 15
+from quantlab.smallcap.universe import industry_slots
+
+# derived from the mandate weight, not a fixed count (M1): one industry stays <= 25% of the book
+INDUSTRY_SLOTS = industry_slots(HOLDINGS)
 GROSS = 0.90
 
 

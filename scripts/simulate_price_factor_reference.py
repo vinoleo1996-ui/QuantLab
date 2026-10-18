@@ -26,7 +26,10 @@ from quantlab.strategy.expert_router import select_reference_basket
 OUT = ROOT / "output" / "price_factor_reference_20260930"
 HOLDINGS = 50
 RETENTION_RANK = 150
-INDUSTRY_SLOTS = 15
+from quantlab.smallcap.universe import industry_slots
+
+# derived from the mandate weight, not a fixed count (M1): one industry stays <= 25% of the book
+INDUSTRY_SLOTS = industry_slots(HOLDINGS)
 GROSS = 0.90
 
 

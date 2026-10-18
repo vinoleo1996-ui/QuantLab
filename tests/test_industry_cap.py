@@ -48,6 +48,24 @@ class IndustryCapTest(unittest.TestCase):
         industries = {c: 'bank' for c in ordered}
         self.assertEqual(len(select(ordered, industries, [], holdings=40, cap=3)), 3)
 
+    def test_universe_select_uses_the_same_mandate_derived_cap(self):
+        # quantlab/smallcap/universe.py used a hard-coded 15 names, which is 37.5% of a 40-name book.
+        from quantlab.smallcap import universe
+        ordered = [f'c{i}' for i in range(200)]
+        # ranked so one industry dominates the head of the list: the cap has to bind
+        industries = {f'c{i}': f'ind{i // 50}' for i in range(200)}
+        chosen = universe.select(ordered, industries, [], holdings=40)
+        self.assertEqual(len(chosen), 40)
+        counts = Counter(industries[c] for c in chosen)
+        for industry, count in counts.items():
+            self.assertLessEqual(count / len(chosen), INDUSTRY_MAX_WEIGHT + 1e-9,
+                                 f'{industry} weighs {count / len(chosen):.2%}')
+
+    def test_both_selection_paths_derive_the_same_slot_count(self):
+        from quantlab.smallcap import universe
+        for holdings in (50, 40, 30, 4):
+            self.assertEqual(universe.industry_slots(holdings), industry_cap_names(holdings))
+
 
 if __name__ == '__main__':
     unittest.main()

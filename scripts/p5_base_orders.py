@@ -96,6 +96,26 @@ def limit_price(open_price, side, upper=None, lower=None, buffer=0.0, tick=0.01)
     return round(np.floor(raw / tick) * tick, 3 if tick < 0.01 else 2), ('rule_band' if capped else None)
 
 
+def require_signal_day(planned, requested):
+    """Refuse to turn an older grid signal into a fresh order list."""
+    planned, requested = pd.Timestamp(planned).normalize(), pd.Timestamp(requested).normalize()
+    if planned != requested:
+        raise SystemExit(f'stale_signal:{planned.date()}:requested_{requested.date()}')
+    return planned
+
+
+def execution_session(calendar, signal_day, execution_date=None):
+    """The next exchange session, optionally pinned by the caller."""
+    calendar = pd.DatetimeIndex(calendar)
+    later = calendar[calendar > pd.Timestamp(signal_day).normalize()]
+    if not len(later):
+        raise SystemExit('no_next_session')
+    nxt = later[0]
+    if execution_date is not None and pd.Timestamp(execution_date).normalize() != nxt:
+        raise SystemExit(f'execution_date_not_next_session:{nxt.date()}')
+    return nxt
+
+
 def build_stock_targets(data_root: Path, signal_date: str, seed: int, gross: float):
     sys.path.insert(0, str(data_root))
     sys.path.insert(0, str(data_root / 'scripts'))
@@ -126,6 +146,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data-root', default=str(ROOT))
     ap.add_argument('--signal-date', required=True)
+    ap.add_argument('--execution-date', default=None,
+                    help='must equal the next exchange session after the signal date')
     ap.add_argument('--capital', type=float, default=800000.0)
     ap.add_argument('--cash', type=float, default=None)
     ap.add_argument('--seed', type=int, default=1)
@@ -142,12 +164,12 @@ def main():
     import p4_alloc as R
 
     plan, day, panel, sessions = build_stock_targets(root, args.signal_date, args.seed, args.gross)
+    require_signal_day(day, args.signal_date)
     codes = sorted(plan)
     targets = [{'signal_date': day, 'weights': dict(plan), 'active': codes, 'sell': [], 'sleeve': 0}]
     from quantlab import p4_ledger
     dataset = p4_ledger.load_dataset(codes)
-    nxt = dataset.calendar[dataset.calendar > day]
-    t = nxt[0]
+    t = execution_session(dataset.calendar, day, args.execution_date)
     eq_share = args.equity_share
     sleeve = {'gold': 0.375 * (1 - eq_share), 'treasury': 0.375 * (1 - eq_share), 'nasdaq': 0.25 * (1 - eq_share)}
 
@@ -239,9 +261,27 @@ def main():
                   'stock_coverage': round(sum(1 for o in orders if o['leg'] == 'stock') / len(codes), 3)},
     }
     out = root / 'output' / 'p5_base_orders' / str(day.date())
+    write_outputs(out, orders, summary, sweep=bool(args.sweep))
+
+
+def write_outputs(out, orders, summary, sweep=False):
+    """Write the preregistered order files, or a separate diagnostic pair when ``--sweep`` is used.
+
+    A residual sweep buys 511010, which is not in P5_BASE, so it must never land in ``orders.csv``.
+    """
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(orders).to_csv(out / 'orders.csv', index=False)
-    (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=1))
+    if sweep:
+        pd.DataFrame(orders).to_csv(out / 'orders_sweep.csv', index=False)
+        report = dict(summary, diagnostic=True, promotion_approved=False)
+        (out / 'summary_sweep.json').write_text(json.dumps(report, ensure_ascii=False, indent=1))
+        print(json.dumps(report, ensure_ascii=False, indent=1, default=str))
+        return
+    formal = [order for order in orders if order.get('leg') != 'sweep']
+    pd.DataFrame(formal).to_csv(out / 'orders.csv', index=False)
+    (out / 'summary.json').write_text(json.dumps(dict(summary, cash_sweep=None,
+                                                     promotion_approved=False),
+                                                    ensure_ascii=False, indent=1))
     print(json.dumps(summary, ensure_ascii=False, indent=1, default=str))
 
 

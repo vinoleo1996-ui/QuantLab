@@ -30,6 +30,7 @@ from quantlab.data.contracts import (
 )
 from quantlab.data.local_adapter import canonical_code
 from quantlab.data.market import universe_at
+from quantlab.data.suspensions import classify_run
 from quantlab.policy_comparison import account_checks
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,11 @@ MAX_PHASE_GAP = 0.05
 QUALITY_P2_CAGR = 0.006321
 HOLD90_CAGR = 0.031791
 INITIAL_CASH = 600_000.0
+
+
+def cash_buffer_for(gross):
+    """The ledger cash reserve implied by a maximum gross exposure."""
+    return round(1.0 - float(gross), 10)
 
 
 def sha256(path):
@@ -479,29 +485,110 @@ def _rules(records, codes=None):
     return result
 
 
-def data_quality(snapshots, missing, data_issues, checks_passed, max_stale_days=5):
-    """Summarize whether the replay is usable as evidence, not merely whether it ran."""
-    issues_by_reason = dict(Counter(str(issue.get('reason', 'unknown')) for issue in data_issues))
-    running, longest = {}, {}
-    for state in snapshots:
+def _stale_runs(snapshots):
+    """Consecutive stale sessions per held code, preserving ledger order."""
+    runs, active = {}, {}
+    for index, state in enumerate(snapshots):
+        raw_day = state.get('date')
+        day = (pd.Timestamp(raw_day).normalize() if raw_day is not None
+               else pd.Timestamp('1970-01-01') + pd.Timedelta(days=index))
         stale = set(state.get('stale') or [])
-        for code in list(running):
+        for code in list(active):
             if code not in stale:
-                running.pop(code)
+                active.pop(code)
         for code in stale:
-            running[code] = running.get(code, 0) + 1
-            longest[code] = max(longest.get(code, 0), running[code])
+            if code not in active:
+                runs.setdefault(code, []).append([])
+                active[code] = runs[code][-1]
+            active[code].append(day)
+    return runs
+
+
+def _delist_map(delistings):
+    if delistings is None:
+        return {}
+    if isinstance(delistings, dict):
+        return {canon(code): pd.Timestamp(day).normalize() for code, day in delistings.items()
+                if day is not None and pd.notna(day)}
+    frame = delistings if isinstance(delistings, pd.DataFrame) else pd.DataFrame(delistings)
+    if frame.empty or 'code' not in frame or 'delist_date' not in frame:
+        return {}
+    return {canon(code): pd.Timestamp(day).normalize()
+            for code, day in zip(frame.code, frame.delist_date) if pd.notna(day)}
+
+
+def data_quality(snapshots, missing, data_issues, checks_passed, max_stale_days=5,
+                 suspension_evidence=None, delistings=None):
+    """Summarize whether the replay is usable as evidence, not merely whether it ran.
+
+    ``suspension_evidence=None`` keeps the legacy rule: every stale run is
+    unexplained and the five-session threshold alone decides. When evidence is
+    supplied, a stale run is suspended only if every session carries a verified
+    raw-cache suspension record; any gap or contradiction stays unexplained.
+    """
+    issues_by_reason = dict(Counter(str(issue.get('reason', 'unknown')) for issue in data_issues))
+    runs = _stale_runs(snapshots)
+    window_end = max((pd.Timestamp(state['date']).normalize() for state in snapshots
+                      if state.get('date')), default=None)
+    delist_dates = _delist_map(delistings)
+    longest = {code: max(len(run) for run in code_runs) for code, code_runs in runs.items()}
     stale_held_max_days = max(longest.values(), default=0)
     stale_held_codes = {code: int(days) for code, days in longest.items() if days > max_stale_days}
+    suspended, unexplained, unexplained_runs = {}, {}, []
+    total_sessions = sum(len(run) for code_runs in runs.values() for run in code_runs)
+    covered_sessions = 0
+    raw_uncovered = []
+    if suspension_evidence is None:
+        unexplained = dict(longest)
+        coverage_complete = True
+    else:
+        coverage_complete = True
+        for code, code_runs in runs.items():
+            evidence = suspension_evidence.get(code)
+            if evidence is None or not evidence.get('complete'):
+                raw_uncovered.append(code)
+            for run in code_runs:
+                result = classify_run(code, run, suspension_evidence, delist_dates.get(code),
+                                      window_end=window_end)
+                covered_sessions += int(result['covered'])
+                if result['status'] == 'suspended':
+                    suspended[code] = max(suspended.get(code, 0), int(result['days']))
+                else:
+                    unexplained[code] = max(unexplained.get(code, 0), int(result['days']))
+                    unexplained_runs.append(dict(code=code, start=str(run[0].date()),
+                                                 end=str(run[-1].date()),
+                                                 **{key: result[key] for key in
+                                                    ('reason', 'days', 'missing', 'contradictions')}))
+                if result['reason'] == 'missing_evidence':
+                    coverage_complete = False
+        if raw_uncovered:
+            coverage_complete = False
+    unexplained_max = max(unexplained.values(), default=0)
     unsettled = any(issue.get('reason') == 'delisting_settlement_unverified' for issue in data_issues)
     return dict(data_issues_by_reason=issues_by_reason, stale_held_max_days=int(stale_held_max_days),
                 stale_held_codes=stale_held_codes,
+                suspended_held_max_days=int(max(suspended.values(), default=0)),
+                suspended_held_codes=suspended,
+                unexplained_stale_held_max_days=int(unexplained_max),
+                unexplained_stale_held_codes={code: int(days) for code, days in unexplained.items()
+                                              if days > max_stale_days},
+                unexplained_runs=unexplained_runs,
+                stale_sessions_total=int(total_sessions),
+                stale_sessions_covered=int(covered_sessions),
+                suspension_coverage_complete=bool(coverage_complete),
+                raw_uncovered_stale_codes=raw_uncovered,
                 missing_panel_count=len(missing), unsettled_delisting=unsettled,
-                data_quality_ok=bool(checks_passed and not missing and stale_held_max_days <= max_stale_days
-                                     and not unsettled))
+                data_quality_ok=bool(checks_passed and not missing and unexplained_max <= max_stale_days
+                                     and coverage_complete and not unsettled))
 
 
-def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_haircut=0.0):
+def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_haircut=0.0,
+                   suspension_evidence=None, capital=None, gross=None, cash_buffer=None):
+    """Replay one account. ``capital``/``gross``/``cash_buffer`` default to the module mandate;
+    pass them explicitly so concurrent replays never share module globals."""
+    capital = INITIAL_CASH if capital is None else float(capital)
+    gross = GROSS if gross is None else float(gross)
+    cash_buffer = cash_buffer_for(gross) if cash_buffer is None else float(cash_buffer)
     if isinstance(targets, (str, Path)):
         payload = json.loads(Path(targets).read_text())
         rows = payload['targets']
@@ -513,7 +600,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_hai
         if day in schedule:
             raise ValueError('duplicate_signal_date')
         weights = {canon(code): float(weight) for code, weight in row['weights'].items()}
-        if len(weights) > HOLD_A + HOLD_B or sum(weights.values()) > GROSS + 1e-8:
+        if len(weights) > HOLD_A + HOLD_B or sum(weights.values()) > gross + 1e-8:
             raise ValueError('target_breaks_position_or_gross_cap')
         schedule[day] = dict(row, weights=weights,
                              active=[canon(code) for code in row['active']],
@@ -527,7 +614,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_hai
     missing = sorted(set(codes) - set(dataset.panels))
     amount = pd.DataFrame({code: dataset.panels[code].amount for code in codes if code in dataset.panels}).reindex(calendar)
     prior_adv = amount.rolling(20, min_periods=20).mean().shift(1)
-    ledger = Ledger(INITIAL_CASH, slippage=0.003, cash_buffer=CASH_BUFFER, participation=0.01,
+    ledger = Ledger(capital, slippage=0.003, cash_buffer=cash_buffer, participation=0.01,
                     cost_mult=cost_mult, min_trade_value=1000.0, allow_open_assumption=True,
                     delistings=getattr(dataset, 'delistings', None), delisting_haircut=delisting_haircut)
     actions = dataset.actions
@@ -569,7 +656,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_hai
                 return False
             values = {name: shares * account.marks[name] for name, shares in held.items()}
             values[code] = values.get(code, 0.0) + quantity * price
-            return sum(values.values()) <= GROSS * (account.nav() - fees) + 1e-6
+            return sum(values.values()) <= gross * (account.nav() - fees) + 1e-6
 
         ledger.execute(day, session, bars, rules, adv, can_buy=can_buy)
         for order in ledger.orders:
@@ -593,7 +680,7 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_hai
         close_rules = _rules(asof_records(dataset.instruments, decision_time(day)),
                              set(row['weights']) | set(row['sell']))
         weights, scale = execution_weights(row['weights'], row['active'], row['sell'],
-                                           ledger.quantities(), ledger.marks, ledger.nav(), gross=GROSS)
+                                           ledger.quantities(), ledger.marks, ledger.nav(), gross=gross)
         begin = len(ledger.orders)
         ledger.queue_targets(weights, day, 'stable_book_rebalance', close_rules)
         for order in ledger.orders[begin:]:
@@ -612,24 +699,26 @@ def replay_account(dataset, targets, *, start, end, cost_mult=1.0, delisting_hai
         for state in snapshots
     }).sort_index()
     returns = nav.pct_change(fill_method=None)
-    returns.iloc[0] = nav.iloc[0] / INITIAL_CASH - 1
+    returns.iloc[0] = nav.iloc[0] / capital - 1
     elapsed = (nav.index[-1] - nav.index[0]).days
     base = nav.loc[nav.index < RECENT_START]
     end = nav.loc[nav.index <= RECENT_END]
     recent = float(end.iloc[-1] / base.iloc[-1] - 1) if len(base) and len(end) else float('nan')
-    drawdown = float((nav / nav.cummax().clip(lower=INITIAL_CASH) - 1).min())
+    drawdown = float((nav / nav.cummax().clip(lower=capital) - 1).min())
     checks = account_checks({'account': [
         {'date': state['date'], 'nav': state['nav'], 'cash': state['cash'], 'quantities': state['quantities'],
          'marks': state['marks'], 'receivables': state['receivables'], 'payables': 0.0}
         for state in snapshots
     ], 'fills': ledger.fills})
-    quality = data_quality(snapshots, missing, ledger.data_issues, checks['passed'])
+    quality = data_quality(snapshots, missing, ledger.data_issues, checks['passed'],
+                           suspension_evidence=suspension_evidence,
+                           delistings=getattr(dataset, 'delistings', None))
     delisting_fills = [fill for fill in ledger.fills if fill.get('reason') == 'delisting']
     summary = {
-        'initial_cash': INITIAL_CASH,
+        'initial_cash': capital,
         'final_equity': float(nav.iloc[-1]),
-        'net_profit': float(nav.iloc[-1] - INITIAL_CASH),
-        'cagr': float((nav.iloc[-1] / INITIAL_CASH) ** (365.25 / elapsed) - 1),
+        'net_profit': float(nav.iloc[-1] - capital),
+        'cagr': float((nav.iloc[-1] / capital) ** (365.25 / elapsed) - 1),
         'max_drawdown': drawdown,
         'recent_return': recent,
         'recent_base': str(base.index[-1].date()) if len(base) else None,

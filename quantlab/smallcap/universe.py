@@ -13,7 +13,7 @@ Pool rules (fixed before running):
   ranked (all Beijing-exchange names, which have no turnover upstream).
 Selection: financial tier (latest net profit >= 0 and 0 < PB <= 3 scores 1),
 seeded random order inside a tier, current holdings kept while inside the top
-150, at most 15 names per industry, 50 names, 90 percent gross equal weight.
+150, one industry at most 25 percent of the book (``industry_slots``), 50 names, 90 percent gross.
 """
 from __future__ import annotations
 
@@ -29,7 +29,15 @@ MIN_ADV = 5_000_000.0
 MIN_HISTORY = 253
 ADV_WINDOW = 60
 CAP_WINDOW = 20
-HOLDINGS, BUFFER, INDUSTRY_SLOTS, GROSS = 50, 100, 15, 0.90
+HOLDINGS, BUFFER, GROSS = 50, 100, 0.90
+# ``p4_mandate.max_industry_weight_in_equity``: a fixed name count is only correct at one book size,
+# so the per-industry cap is derived from the mandate weight instead of hard-coded.
+INDUSTRY_MAX_WEIGHT = 0.25
+
+
+def industry_slots(holdings=HOLDINGS, max_weight=INDUSTRY_MAX_WEIGHT):
+    """Equal-weight name cap that keeps one industry at or below ``max_weight`` of the book."""
+    return max(1, int(math.floor(max_weight * holdings + 1e-9)))
 
 
 def decision_grid(sessions, start, end, phase=0, step=20):
@@ -63,6 +71,8 @@ def pool_on(day, features, kind, band='absolute', exclude_st=False, min_history=
     keep = (history >= min_history) & adv.notna()
     if exclude_st:
         keep &= ~features['st'].loc[day].reindex(adv.index).eq(1)
+    # Beijing names have no upstream turnover and were only ever excluded at call sites.
+    keep &= ~pd.Index(adv.index.map(str)).str.startswith('bj.')
     eligible = adv[keep]
     if kind == 'adv':
         ordered = eligible.sort_values(ascending=False, kind='mergesort')
@@ -148,8 +158,9 @@ def financial_tier(codes, net_profit, pb):
     return ((profit >= 0) & (book > 0) & (book <= 3)).astype(float)
 
 
-def select(ordered, industries, current, holdings=HOLDINGS, buffer=BUFFER, slots=INDUSTRY_SLOTS,
+def select(ordered, industries, current, holdings=HOLDINGS, buffer=BUFFER, slots=None,
            retain_order=None):
+    slots = industry_slots(holdings) if slots is None else slots
     held = set(current)
     retain_order = ordered if retain_order is None else retain_order
     retained = [code for code in retain_order[:holdings + buffer] if code in held]
