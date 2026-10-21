@@ -1,2 +1,0 @@
-# Additional research dependency; install alongside requirements-research.lock.
-lightgbm==4.6.0
