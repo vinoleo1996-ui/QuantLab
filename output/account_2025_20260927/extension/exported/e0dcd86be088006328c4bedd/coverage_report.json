@@ -1,0 +1,17 @@
+{
+  "snapshot_id": "e0dcd86be088006328c4bedd5e4fa1aa545274c32b474767cb84140b055b57cc",
+  "securities": 6040,
+  "rows": 12220827,
+  "turnover_rows": 11977965,
+  "state_rows": 11977965,
+  "derived_open_rows": 11953333,
+  "actions": 37589,
+  "industry_records": 8564,
+  "financial_records": 901679,
+  "start": "2014-01-02",
+  "end": "2026-09-22",
+  "status": "conditional_research_snapshot",
+  "unexplained_ex_reference_rows": 3900,
+  "promotion_approved": false,
+  "source_database_unchanged": true
+}
